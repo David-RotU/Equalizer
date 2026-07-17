@@ -21,6 +21,7 @@ class EqWindow(QWidget):
         super().__init__()
         self.freqs = np.zeros(5)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.sliders = []
 
 
         
@@ -41,7 +42,6 @@ class EqWindow(QWidget):
             painter.fillRect(self.rect(), QColor(40, 40, 40))
 
             # paint Frequencies
-            print("Frequencies:", len(self.freqs))
             for i in range(len(self.freqs)):
                 value = abs(self.freqs[i]) / 256
                 x = (i + 0.5) / len(self.freqs)
@@ -125,8 +125,7 @@ class EqWindow(QWidget):
         self.points.sort(key=lambda p: p.x())
         self.selected = self.points.index(newPoint)
         self.update()
-        from AudioEngine import AudioEngine
-        AudioEngine.instance.update_gains()
+        self.update_sliders()
         
 
     def mouseMoveEvent(self, event):
@@ -137,6 +136,7 @@ class EqWindow(QWidget):
             self.selected = self.points.index(dragged_point)
 
             self.update()
+            self.update_sliders()
     
     
     def toScreenPos(self, pos: QPointF) -> QPointF:
@@ -159,8 +159,7 @@ class EqWindow(QWidget):
 
     def mouseReleaseEvent(self, event):
         self.dragging = False
-        from AudioEngine import AudioEngine
-        AudioEngine.instance.update_gains()
+        self.update_sliders()
 
 
 
@@ -169,8 +168,43 @@ class EqWindow(QWidget):
             self.points.pop(self.selected)
             self.selected = -1
             self.update()
-            from AudioEngine import AudioEngine
-            AudioEngine.instance.update_gains()
+            self.update_sliders()
+            
+    def set_gain(self, index, value):
+        # Map index 0..4 to x positions 0.1, 0.3, 0.5, 0.7, 0.9
+        x_target = 0.1 + index * 0.2
+        # Find if a point is close to x_target
+        threshold = 0.08
+        found = False
+        for p in self.points:
+            if abs(p.x() - x_target) < threshold:
+                p.setY(1.0 - value)
+                found = True
+                break
+        if not found:
+            self.points.append(QPointF(x_target, 1.0 - value))
+            self.points.sort(key=lambda p: p.x())
+            
+        self.update()
+        pass
+
+    def update_sliders(self):
+        if not hasattr(self, 'sliders') or not self.sliders:
+            return
+        for i, slider in enumerate(self.sliders):
+            x_target = 0.1 + i * 0.2
+            threshold = 0.1
+            closest_point = None
+            min_dist = float('inf')
+            for p in self.points:
+                dist = abs(p.x() - x_target)
+                if dist < threshold and dist < min_dist:
+                    min_dist = dist
+                    closest_point = p
+            if closest_point is not None:
+                slider.blockSignals(True)
+                slider.setValue(int((1.0 - closest_point.y()) * 100))
+                slider.blockSignals(False)
 
 
 

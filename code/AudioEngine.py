@@ -17,8 +17,7 @@ class AudioEngine():
 
     def __init__(self, eqWindow: EqWindow):
         self.eqWindow = eqWindow
-        self.gains = np.ones(5, dtype=np.float32)
-
+        
         self.transformer = SpectralTransformer(
             windowLength=self.windowLength,
             hopLength=self.step,
@@ -29,6 +28,16 @@ class AudioEngine():
         self.bufferR = np.zeros(self.windowLength)
 
         self.frame = 0
+        
+        self.num_bins = self.windowLength // 2 + 1
+        self.gains = np.ones(self.num_bins, dtype=np.float32)
+        self.current_mag_pre = np.zeros(self.num_bins, dtype=np.float32)
+        self.current_mag_post = np.zeros(self.num_bins, dtype=np.float32)
+        self.waveform_max = None
+        self.waveform_min = None
+        
+        # Populate gains with initial EQ curve configuration
+        self.update_gains()
 
 
     def compare_energy(self):
@@ -74,6 +83,23 @@ class AudioEngine():
         self.overlapL = np.zeros(self.windowLength - self.step)
         self.overlapR = np.zeros(self.windowLength - self.step)        
         self.stream = None
+
+        # Generate downsampled waveform (1000 points) for visualization
+        mono_sig = np.mean(self.sig, axis=1)
+        num_samples = len(mono_sig)
+        num_points = 1000
+        block_size = max(1, num_samples // num_points)
+        self.waveform_max = np.zeros(num_points, dtype=np.float32)
+        self.waveform_min = np.zeros(num_points, dtype=np.float32)
+        for i in range(num_points):
+            start = i * block_size
+            end = min(num_samples, (i + 1) * block_size)
+            if start < end:
+                self.waveform_max[i] = np.max(mono_sig[start:end])
+                self.waveform_min[i] = np.min(mono_sig[start:end])
+
+        # Ensure gains are aligned with the audio sample rate configuration
+        self.update_gains()
 
     def update_gains(self):
         num_bins = self.windowLength//2 + 1
@@ -121,6 +147,10 @@ class AudioEngine():
             self.stream.stop()
             self.stream.close()
             self.stream = None
+        self.playing = False
+        if hasattr(self, 'current_mag_pre'):
+            self.current_mag_pre.fill(0)
+            self.current_mag_post.fill(0)
 
     def stdtft(self, sig):
         # Fallback to SpectralTransformer for consistency/backward compatibility
@@ -135,18 +165,10 @@ class AudioEngine():
 
 
     def callback(self, outdata, frames, time, status):
-        if self.frame < self.ZxxL.shape[1]:
-            self.eqWindow.update_frequencies(self.ZxxL[:, self.frame])
-            if not self.positionSlider.isSliderDown():
-                self.positionSlider.setValue(int(self.frame / self.ZxxL.shape[1] * 100))
-
-
         block = self.next_block()
 
         if block is None:
             outdata[:] = 0
-            playing = False
-            self.positionSlider.setValue(0)
             raise sd.CallbackStop()
 
         outdata[:] = block
@@ -156,7 +178,11 @@ class AudioEngine():
 
     def next_block(self):       
         if self.frame >= self.ZxxL.shape[1]:
+            if hasattr(self, 'current_mag_pre'):
+                self.current_mag_pre.fill(0)
+                self.current_mag_post.fill(0)
             if len(self.bufferL) < 256: 
+                self.playing = False
                 return None
             
             else:
@@ -171,6 +197,10 @@ class AudioEngine():
         # Apply equalizer
         specL = self.ZxxL[:, self.frame] * self.gains
         specR = self.ZxxR[:, self.frame] * self.gains
+
+        # Save magnitude spectra for visualizer
+        self.current_mag_pre = (np.abs(self.ZxxL[:, self.frame]) + np.abs(self.ZxxR[:, self.frame])) / 2.0
+        self.current_mag_post = (np.abs(specL) + np.abs(specR)) / 2.0
 
         # Back to time domain
         winL = np.fft.irfft(specL, self.windowLength)

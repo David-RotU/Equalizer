@@ -5,7 +5,7 @@ import sys
 import gui.EqWindow
 from AudioEngine import AudioEngine
 from gui.ControlPoint import ControlPoint
-from PySide6.QtCore import QPointF, QSize, Qt, QLineF
+from PySide6.QtCore import QPointF, QSize, Qt, QLineF, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QHBoxLayout, QVBoxLayout, QMainWindow, QPushButton, QSlider, QStyle, QWidget
 from PySide6.QtGui import QIcon, QPainter, QPainterPath, QPen, QColor
 import numpy as np
@@ -15,8 +15,9 @@ import sounddevice as sd
 
 
 class ControlsGui(QWidget):
-    def __init__(self, eqWindow: EqWindow.EqWindow):
+    def __init__(self, eqWindow: EqWindow.EqWindow, visualizer=None):
         super().__init__()
+        self.visualizer = visualizer
         layoutV = QVBoxLayout(self)
 
 
@@ -37,11 +38,11 @@ class ControlsGui(QWidget):
         searchButton = QPushButton("Select Audio File", self)
         searchButton.clicked.connect(self.search_file)
         
-        pause_play_button = QPushButton()
-        pause_play_button.setIcon(
-        pause_play_button.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+        self.pause_play_button = QPushButton()
+        self.pause_play_button.setIcon(
+        self.pause_play_button.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
         )        
-        pause_play_button.clicked.connect(self.play_pause_audio)
+        self.pause_play_button.clicked.connect(self.play_pause_audio)
   
 
         positionSlider = QSlider(Qt.Orientation.Horizontal, self)
@@ -50,17 +51,50 @@ class ControlsGui(QWidget):
         AudioEngine.instance.positionSlider = positionSlider
 
         layout1.addWidget(searchButton)
-        layout1.addWidget(pause_play_button)
+        layout1.addWidget(self.pause_play_button)
         layout1.addWidget(positionSlider)
 
 
         self.label = QLabel()
         self.verify_energy_button = QPushButton("Verify Energy")
         self.verify_energy_button.pressed.connect(self.verify_energy)
-        # self.label.setText("")
+        
+        self.recompute_button = QPushButton("Apply EQ & Recompute")
+        self.recompute_button.clicked.connect(self.on_recompute_clicked)
 
         layout2.addWidget(self.label)
         layout2.addWidget(self.verify_energy_button)
+        layout2.addWidget(self.recompute_button)
+
+        # GUI timer to update progress slider and playback state safely in the GUI thread
+        self.progress_timer = QTimer(self)
+        self.progress_timer.timeout.connect(self.update_progress)
+        self.progress_timer.start(100)  # every 100ms
+
+
+    def on_recompute_clicked(self):
+        # 1. Apply the current EQ curve to AudioEngine
+        AudioEngine.instance.update_gains()
+        # 2. Recompute the visualizer graphics
+        if self.visualizer:
+            self.visualizer.recompute_graphics()
+
+
+    def update_progress(self):
+        engine = AudioEngine.instance
+        if engine and engine.audio_loaded:
+            if engine.playing:
+                if engine.stream and not engine.stream.active:
+                    engine.stop()
+                    self.set_button(False)
+                
+                if hasattr(engine, 'positionSlider') and engine.positionSlider and not engine.positionSlider.isSliderDown():
+                    total_frames = engine.ZxxL.shape[1]
+                    if total_frames > 0:
+                        val = min(100, int(engine.frame / total_frames * 100))
+                        engine.positionSlider.blockSignals(True)
+                        engine.positionSlider.setValue(val)
+                        engine.positionSlider.blockSignals(False)
 
 
     def verify_energy(self):
@@ -99,10 +133,12 @@ class ControlsGui(QWidget):
             try:
                 sig, sr = sf.read(file_path)
             except Exception as e:
-                print(f"Fehler beim Lesen von {filename}: {e}")
+                print(f"Fehler beim Lesen von {file_path}: {e}")
                 return
             
             self.label.setText(os.path.basename(file_path))
             AudioEngine.instance.load_audio(sig, sr)
             AudioEngine.instance.frame = 0
+            if self.visualizer:
+                self.visualizer.on_track_loaded()
 
