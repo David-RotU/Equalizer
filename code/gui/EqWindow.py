@@ -41,8 +41,7 @@ class EqWindow(QWidget):
         with QPainter(self) as painter:
             painter.fillRect(self.rect(), QColor(40, 40, 40))
 
-            # paint Frequencies
-            print("Frequencies:", len(self.freqs))
+#            print("Frequencies:", len(self.freqs))
             for i in range(len(self.freqs)):
                 value = abs(self.freqs[i]) / 256
                 x = (i + 0.5) / len(self.freqs)

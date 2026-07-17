@@ -4,6 +4,8 @@ from PySide6.QtWidgets import QSlider
 import numpy as np
 import sounddevice as sd
 import gui.EqWindow
+from scipy.signal.windows import hann
+
 
 class AudioEngine():
 
@@ -13,25 +15,28 @@ class AudioEngine():
     windowLength = 512
     step = 256      # 50 % Overlap
     overlap = windowLength - step
-    window = np.hanning(windowLength)
+    # window = np.hanning(windowLength)
+    window = hann(windowLength, sym=False)
     positionSlider: QSlider
+    
     
 
     def __init__(self, eqWindow: EqWindow):
         self.eqWindow = eqWindow
         self.gains = np.ones(5, dtype=np.float32)
-        self.norm = np.zeros(self.windowLength)
+        self.norm = .75 #Todo compute 
 
         self.bufferL = np.zeros(self.windowLength)
         self.bufferR = np.zeros(self.windowLength)
-
+        self.normBuffer = np.zeros(self.windowLength)
+        
         self.frame=0
 
-        for i in range(0, self.windowLength, self.step):
-            end = min(i + self.windowLength, self.windowLength)
-            self.norm[i:end] += self.window[:end - i] ** 2
+        # for i in range(0, self.windowLength, self.step):
+        #     end = min(i + self.windowLength, self.windowLength)
+        #     self.norm[i:end] += self.window[:end - i] ** 2
 
-        self.norm[self.norm < 1e-12] = 1.0
+        # self.norm[self.norm < 1e-12] = 1.0
 
 
     def compare_energy(self):
@@ -49,6 +54,12 @@ class AudioEngine():
         print("RMS Orginal:", np.sqrt(np.mean(np.pow(self.sig, 2))))
         print("RMS Reconstructed:", np.sqrt(np.mean(np.pow(reconstructed, 2))))
         
+        print()
+
+        difference = self.sig_padded - reconstructed[:len(self.sig_padded)]
+        print("Max Difference:", np.max(np.abs(difference)))
+        print("Mean Difference:", np.sqrt(np.mean(np.pow(difference, 2))))
+        
 
     def compute_energy(self, signal):
         sqared = np.pow(signal, 2)
@@ -64,13 +75,22 @@ class AudioEngine():
             reconstructed.append(nxt)
             nxt = self.next_block()
 
-        return reconstructed
+        return np.concatenate(reconstructed, axis=0)
 
     def load_audio(self, sig, sr):
         self.audio_loaded=True
         self.sig = sig
-        self.ZxxL = self.stdtft(sig[:, 0])
-        self.ZxxR = self.stdtft(sig[:, 1])
+
+        pad = self.step
+
+        self.sig_padded = np.pad(
+        	sig,
+        	((pad, pad), (0, 0)),
+	        mode="constant"
+        )
+
+        self.ZxxL = self.stdtft(self.sig_padded[:, 0])
+        self.ZxxR = self.stdtft(self.sig_padded[:, 1])
 
         self.sample_rate = sr
 
@@ -87,8 +107,6 @@ class AudioEngine():
             f = i / (num_bins - 1)
             self.gains[i] = self.eqWindow.interpolate(f)
         
-        print(self.gains)
-
 
     def set_gain(self, start_bin, end_bin, gain):
         self.gains[start_bin:end_bin] = gain
@@ -126,7 +144,13 @@ class AudioEngine():
             self.stream = None
 
     def stdtft(self, sig):
-        numWindows = (len(sig) - self.windowLength) // self.step + 1
+        length = len(sig)
+
+        numWindows = int(np.ceil((length - self.windowLength) / self.step)) + 1
+
+        # Pad last window  
+        padLength = (numWindows - 1) * self.step + self.windowLength - length
+        sig = np.pad(sig, (0, padLength))
 
         Zxx = np.zeros((self.windowLength // 2 + 1, numWindows), dtype=np.complex64)
 
@@ -144,7 +168,7 @@ class AudioEngine():
 
     def callback(self, outdata, frames, time, status):
         if self.frame < self.ZxxL.shape[1]:
-            self.eqWindow.update_frequencies(self.ZxxL[:, self.frame])
+            self.eqWindow.update_frequencies(self.ZxxL[:, self.frame] * self.gains)
             if not self.positionSlider.isSliderDown():
                 self.positionSlider.setValue(int(self.frame / self.ZxxL.shape[1] * 100))
 
@@ -172,7 +196,6 @@ class AudioEngine():
                 self.bufferL = self.bufferL[256:]
                 self.bufferR = self.bufferR[256:]
 
-
                 return hop
 
 
@@ -184,20 +207,27 @@ class AudioEngine():
         winL = np.fft.irfft(specL, self.windowLength)
         winR = np.fft.irfft(specR, self.windowLength)
 
+        #winL *= self.window# / self.norm
+        #winR *= self.window# / self.norm
 
         # add into synthesis buffer
         self.bufferL += winL
-        self.bufferR += winR        
+        self.bufferR += winR     
+        # self.normBuffer += self.window**2   
 
         # output first hop
-        outL = self.bufferL[:self.step].copy()
-        outR = self.bufferR[:self.step].copy()      
+        outL = self.bufferL[:self.step].copy()# /  self.normBuffer[:self.step]
+        outR = self.bufferR[:self.step].copy()# /  self.normBuffer[:self.step]
 
-        # shift buffer
+
+
+        # shift buffers
         self.bufferL[:-self.step] = self.bufferL[self.step:]
         self.bufferR[:-self.step] = self.bufferR[self.step:]        
         self.bufferL[-self.step:] = 0
         self.bufferR[-self.step:] = 0       
+        # self.normBuffer[:-self.step] = self.normBuffer[self.step:]        
+        # self.normBuffer[-self.step:] = 0
         self.frame += 1     
 
         return np.column_stack((outL, outR))
