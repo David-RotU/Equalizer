@@ -83,28 +83,41 @@ def test_eq_curve():
     print("Testing EqCurve interpolation...")
     from audio.eq_curve import EqCurve
     
-    # Test empty / default points
+    # 1. Test empty / default points [(0.3, 0.5), (0.3, 0.2)]
     curve = EqCurve()
-    # default points are [(0.3, 0.5), (0.3, 0.2)]
-    # since both x are 0.3, it returns 1.0 - 0.5 = 0.5 for f <= 0.3, and 1.0 - 0.2 = 0.8 for f >= 0.3
-    assert abs(curve.interpolate(0.1) - 0.5) < 1e-6
-    assert abs(curve.interpolate(0.3) - 0.5) < 1e-6
-    assert abs(curve.interpolate(0.4) - 0.8) < 1e-6
-
-    # Test custom points (e.g. linear ramp)
-    # y range in GUI is 0 to 1, gain is 1 - y.
-    # points: (0.2, 0.8) => gain = 0.2
-    #         (0.8, 0.2) => gain = 0.8
-    custom_points = [(0.2, 0.8), (0.8, 0.2)]
-    curve = EqCurve(custom_points)
     
-    # Boundary: f <= 0.2
-    assert abs(curve.interpolate(0.1) - 0.2) < 1e-6
-    # Boundary: f >= 0.8
-    assert abs(curve.interpolate(0.9) - 0.8) < 1e-6
-    # Midpoint: f = 0.5
-    # expected gain is 0.2 + (0.8 - 0.2) * 0.5 = 0.5
-    assert abs(curve.interpolate(0.5) - 0.5) < 1e-6
+    # For a frequency resulting in x <= 0.3, e.g. 50 Hz (x = log10(50/20)/3 = 0.132)
+    # y_raw = 0.5 => gain_db = (1 - 0.5) * 52 - 40 = -14 dB => linear gain = 10**(-14/20) = 0.199526231
+    f_low = 50.0 / 22050.0
+    val_low = curve.interpolate(f_low)
+    expected_low = 10.0 ** (-14.0 / 20.0)
+    assert abs(val_low - expected_low) < 1e-6, f"Expected {expected_low}, got {val_low}"
+    
+    # For a frequency resulting in x >= 0.3, e.g. 1000 Hz (x = log10(1000/20)/3 = 0.566)
+    # y_raw = 0.2 => gain_db = (1 - 0.2) * 52 - 40 = 1.6 dB => linear gain = 10**(1.6/20) = 1.2022644
+    f_high = 1000.0 / 22050.0
+    val_high = curve.interpolate(f_high)
+    expected_high = 10.0 ** (1.6 / 20.0)
+    assert abs(val_high - expected_high) < 1e-6, f"Expected {expected_high}, got {val_high}"
+
+    # 2. Test custom points for linear interpolation on log-scale
+    # points: (0.0, 1.0) => y_raw = 1.0 => gain_db = -40 => gain = 0.01
+    #         (1.0, 0.0) => y_raw = 0.0 => gain_db = +12 => gain = 3.9810717
+    custom_points = [(0.0, 1.0), (1.0, 0.0)]
+    curve_custom = EqCurve(custom_points)
+    
+    # Boundary: f at 20 Hz (x = 0.0)
+    f_20 = 20.0 / 22050.0
+    assert abs(curve_custom.interpolate(f_20) - 0.01) < 1e-6
+    
+    # Boundary: f at 20000 Hz (x = 1.0)
+    f_20k = 20000.0 / 22050.0
+    assert abs(curve_custom.interpolate(f_20k) - 10.0**(12.0/20.0)) < 1e-6
+    
+    # Midpoint: f at 632.45553 Hz (x = 0.5 on log scale)
+    # y_raw = 0.5 => gain_db = (1 - 0.5) * 52 - 40 = -14 dB => gain = 10**(-14/20) = 0.199526
+    f_mid = 632.45553 / 22050.0
+    assert abs(curve_custom.interpolate(f_mid) - 10.0**(-14.0/20.0)) < 1e-6
     
     print("EqCurve Interpolation: PASSED")
 
@@ -122,7 +135,10 @@ def test_headless_eq_processing():
     spectrum = transformer.analyze((sig, fs))
     
     # Apply flat EQ (gain = 0.5 everywhere)
-    curve = EqCurve([(0.5, 0.5)])
+    # gain_db = 20 * log10(0.5) = -6.0205999
+    # y_raw = 1.0 - (gain_db + 40.0) / 52.0 = 0.34655
+    y_raw = 1.0 - (20.0 * np.log10(0.5) + 40.0) / 52.0
+    curve = EqCurve([(0.5, y_raw)])
     
     num_bins = spectrum.fft_length // 2 + 1
     gains = np.empty(num_bins, dtype=np.float32)
