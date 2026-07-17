@@ -107,3 +107,8 @@ env/
 *.njsproj
 *.sln
 *.swp
+
+# Nix build outputs
+result
+result-*
+

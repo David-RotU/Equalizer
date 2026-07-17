@@ -1,7 +1,6 @@
 import os
 from signal import signal
 import sys
-from turtle import poly
 
 import gui.EqWindow
 from AudioEngine import AudioEngine
