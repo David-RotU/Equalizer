@@ -3,7 +3,7 @@ from . import EqWindow
 from gui.ControlsGui import ControlsGui
 from PySide6.QtCore import QSize, Qt
 from AudioEngine import AudioEngine
-from PySide6.QtWidgets import QApplication, QMainWindow, QMenuBar, QPushButton, QSlider, QVBoxLayout, QHBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QMenuBar, QPushButton, QSlider, QVBoxLayout, QHBoxLayout, QWidget, QLabel
 import numpy as np
 
 class MainWindow(QMainWindow):
@@ -81,22 +81,103 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central_widget)
         
         eq_Widget = QWidget()
-        eq_layout = QHBoxLayout(eq_Widget)
+        eq_layout = QVBoxLayout(eq_Widget)
         eq_layout.setContentsMargins(10, 10, 10, 10)
+        eq_layout.setSpacing(10)
 
         eq_window = EqWindow.EqWindow()
+        self.eq_window = eq_window
         AudioEngine.instance = AudioEngine(eq_window) 
 
         eq_layout.addWidget(eq_window, 1)
-        for i in range(5):
-            slider = QSlider(Qt.Orientation.Vertical)
-            slider.setRange(0, 100)
-            slider.setValue(50)
-            eq_layout.addWidget(slider, 0)
-            slider.sliderMoved.connect(lambda value, index=i: eq_window.set_gain(index, value / 100.0))
-            eq_window.sliders.append(slider)
 
-        eq_window.update_sliders()
+        # Create control panel for selected points
+        controls_panel = QWidget()
+        controls_layout = QHBoxLayout(controls_panel)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(15)
+        
+        # 50% Left side: Sliders (Gain and Frequency)
+        sliders_widget = QWidget()
+        sliders_layout = QVBoxLayout(sliders_widget)
+        sliders_layout.setContentsMargins(0, 0, 0, 0)
+        sliders_layout.setSpacing(8)
+        
+        gain_row = QWidget()
+        gain_row_layout = QHBoxLayout(gain_row)
+        gain_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.gain_label = QLabel("Gain: -")
+        self.gain_label.setMinimumWidth(120)
+        self.gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.gain_slider.setRange(0, 100)
+        self.gain_slider.setEnabled(False)
+        gain_row_layout.addWidget(self.gain_label, 1)
+        gain_row_layout.addWidget(self.gain_slider, 3)
+        
+        freq_row = QWidget()
+        freq_row_layout = QHBoxLayout(freq_row)
+        freq_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.freq_label = QLabel("Frequency: -")
+        self.freq_label.setMinimumWidth(120)
+        self.freq_slider = QSlider(Qt.Orientation.Horizontal)
+        self.freq_slider.setRange(0, 1000)
+        self.freq_slider.setEnabled(False)
+        freq_row_layout.addWidget(self.freq_label, 1)
+        freq_row_layout.addWidget(self.freq_slider, 3)
+        
+        sliders_layout.addWidget(gain_row)
+        sliders_layout.addWidget(freq_row)
+        
+        # 50% Right side: Buttons (Add / Remove)
+        buttons_widget = QWidget()
+        buttons_layout = QHBoxLayout(buttons_widget)
+        buttons_layout.setContentsMargins(0, 0, 0, 0)
+        buttons_layout.setSpacing(15)
+        buttons_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.add_button = QPushButton("Add Point")
+        self.remove_button = QPushButton("Remove Selected")
+        self.remove_button.setEnabled(False)
+        
+        self.add_button.setStyleSheet("""
+            QPushButton {
+                background-color: #383838;
+                border: 1px solid #7c4dff;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border: 1px solid #b388ff;
+            }
+        """)
+        self.remove_button.setStyleSheet("""
+            QPushButton {
+                background-color: #383838;
+                border: 1px solid #ff5252;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border: 1px solid #ff8a80;
+            }
+            QPushButton:disabled {
+                border: 1px solid #444444;
+                color: #888888;
+            }
+        """)
+        
+        buttons_layout.addWidget(self.add_button)
+        buttons_layout.addWidget(self.remove_button)
+        
+        controls_layout.addWidget(sliders_widget, 1)
+        controls_layout.addWidget(buttons_widget, 1)
+        
+        eq_layout.addWidget(controls_panel, 0)
+
+        # Connections
+        eq_window.pointSelectionChanged.connect(self.update_point_controls)
+        self.gain_slider.valueChanged.connect(self.on_gain_slider_changed)
+        self.freq_slider.valueChanged.connect(self.on_freq_slider_changed)
+        self.add_button.clicked.connect(self.on_add_point_clicked)
+        self.remove_button.clicked.connect(self.on_remove_point_clicked)
 
         # Instantiate VisualizerWidget early to pass callback
         from gui.VisualizerWidget import VisualizerWidget
@@ -116,6 +197,55 @@ class MainWindow(QMainWindow):
 
         central_widget.setLayout(layout)
         eq_Widget.setLayout(eq_layout)
+
+    def update_point_controls(self):
+        selected_idx = self.eq_window.selected
+        if selected_idx >= 0 and selected_idx < len(self.eq_window.points):
+            point = self.eq_window.points[selected_idx]
+            
+            self.gain_slider.setEnabled(True)
+            self.freq_slider.setEnabled(True)
+            self.remove_button.setEnabled(True)
+            
+            self.gain_slider.blockSignals(True)
+            self.freq_slider.blockSignals(True)
+            self.gain_slider.setValue(int((1.0 - point.y()) * 100))
+            self.freq_slider.setValue(int(point.x() * 1000))
+            self.gain_slider.blockSignals(False)
+            self.freq_slider.blockSignals(False)
+            
+            self.gain_label.setText(f"Gain: {int((1.0 - point.y()) * 100)}%")
+            self.freq_label.setText(f"Frequency: {int(point.x() * 1000)}")
+        else:
+            self.gain_slider.setEnabled(False)
+            self.freq_slider.setEnabled(False)
+            self.remove_button.setEnabled(False)
+            self.gain_label.setText("Gain: -")
+            self.freq_label.setText("Frequency: -")
+
+    def on_gain_slider_changed(self, value):
+        selected_idx = self.eq_window.selected
+        if selected_idx >= 0 and selected_idx < len(self.eq_window.points):
+            point = self.eq_window.points[selected_idx]
+            point.setY(1.0 - (value / 100.0))
+            self.eq_window.update()
+            self.gain_label.setText(f"Gain: {value}%")
+
+    def on_freq_slider_changed(self, value):
+        selected_idx = self.eq_window.selected
+        if selected_idx >= 0 and selected_idx < len(self.eq_window.points):
+            point = self.eq_window.points[selected_idx]
+            point.setX(value / 1000.0)
+            self.eq_window.points.sort(key=lambda p: p.x())
+            self.eq_window.selected = self.eq_window.points.index(point)
+            self.eq_window.update()
+            self.freq_label.setText(f"Frequency: {value}")
+
+    def on_add_point_clicked(self):
+        self.eq_window.add_new_point()
+
+    def on_remove_point_clicked(self):
+        self.eq_window.remove_selected_point()
 
 def main():
     app = QApplication([])

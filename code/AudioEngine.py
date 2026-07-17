@@ -58,6 +58,26 @@ class AudioEngine():
         print("RMS Reconstructed:", np.sqrt(np.mean(reconstructed ** 2)))
         
 
+    def get_energy_comparison(self) -> str:
+        if not self.audio_loaded:
+            return "RMS Original: - | RMS Equalized: -"
+        
+        # Analyze using SpectralTransformer
+        spectrum = self.transformer.analyze((self.sig, self.sample_rate))
+        
+        # Apply the current gains
+        gains_expanded = self.gains[:, np.newaxis, np.newaxis]
+        spectrum.data = spectrum.data * gains_expanded
+        
+        # Synthesize equalized audio
+        reconstructed = self.transformer.synthesize(spectrum)
+        
+        rms_orig = np.sqrt(np.mean(self.sig ** 2))
+        rms_recon = np.sqrt(np.mean(reconstructed ** 2))
+        
+        return f"RMS Original: {rms_orig:.4f} | RMS Equalized: {rms_recon:.4f}"
+        
+
     def compute_energy(self, signal):
         squared = signal ** 2
         return np.sum(squared)

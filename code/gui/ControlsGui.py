@@ -55,16 +55,16 @@ class ControlsGui(QWidget):
         layout1.addWidget(positionSlider)
 
 
-        self.label = QLabel()
-        self.verify_energy_button = QPushButton("Verify Energy")
-        self.verify_energy_button.pressed.connect(self.verify_energy)
+        self.label = QLabel("No file selected")
+        self.energy_label = QLabel("RMS Original: - | RMS Equalized: -")
+        self.energy_label.setStyleSheet("color: #00e676; font-weight: bold;")
         
         self.recompute_button = QPushButton("Apply EQ & Recompute")
         self.recompute_button.clicked.connect(self.on_recompute_clicked)
 
-        layout2.addWidget(self.label)
-        layout2.addWidget(self.verify_energy_button)
-        layout2.addWidget(self.recompute_button)
+        layout2.addWidget(self.label, 2)
+        layout2.addWidget(self.energy_label, 3)
+        layout2.addWidget(self.recompute_button, 1)
 
         # GUI timer to update progress slider and playback state safely in the GUI thread
         self.progress_timer = QTimer(self)
@@ -78,6 +78,8 @@ class ControlsGui(QWidget):
         # 2. Recompute the visualizer graphics
         if self.visualizer:
             self.visualizer.recompute_graphics()
+        # 3. Update the energy label
+        self.update_energy_status()
 
 
     def update_progress(self):
@@ -97,8 +99,9 @@ class ControlsGui(QWidget):
                         engine.positionSlider.blockSignals(False)
 
 
-    def verify_energy(self):
-        AudioEngine.instance.compare_energy()
+    def update_energy_status(self):
+        status_str = AudioEngine.instance.get_energy_comparison()
+        self.energy_label.setText(status_str)
 
 
     def set_button(self, paused: bool):
@@ -139,6 +142,7 @@ class ControlsGui(QWidget):
             self.label.setText(os.path.basename(file_path))
             AudioEngine.instance.load_audio(sig, sr)
             AudioEngine.instance.frame = 0
+            self.update_energy_status()
             if self.visualizer:
                 self.visualizer.on_track_loaded()
 

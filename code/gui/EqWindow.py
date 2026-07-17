@@ -1,11 +1,13 @@
 from gui.ControlPoint import ControlPoint
-from PySide6.QtCore import QPointF, QSize, Qt, QLineF
+from PySide6.QtCore import QPointF, QSize, Qt, QLineF, Signal
 from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QWidget
 from PySide6.QtGui import QPainter, QPainterPath, QPen, QColor
 import numpy as np
 
 
 class EqWindow(QWidget):
+
+    pointSelectionChanged = Signal()
 
     points = [
 		    QPointF(.3, .5),
@@ -116,6 +118,7 @@ class EqWindow(QWidget):
                 break
 
         self.update()
+        self.pointSelectionChanged.emit()
     
 
     def mouseDoubleClickEvent(self, event):
@@ -125,7 +128,7 @@ class EqWindow(QWidget):
         self.points.sort(key=lambda p: p.x())
         self.selected = self.points.index(newPoint)
         self.update()
-        self.update_sliders()
+        self.pointSelectionChanged.emit()
         
 
     def mouseMoveEvent(self, event):
@@ -136,7 +139,7 @@ class EqWindow(QWidget):
             self.selected = self.points.index(dragged_point)
 
             self.update()
-            self.update_sliders()
+            self.pointSelectionChanged.emit()
     
     
     def toScreenPos(self, pos: QPointF) -> QPointF:
@@ -159,7 +162,7 @@ class EqWindow(QWidget):
 
     def mouseReleaseEvent(self, event):
         self.dragging = False
-        self.update_sliders()
+        self.pointSelectionChanged.emit()
 
 
 
@@ -168,43 +171,22 @@ class EqWindow(QWidget):
             self.points.pop(self.selected)
             self.selected = -1
             self.update()
-            self.update_sliders()
+            self.pointSelectionChanged.emit()
             
-    def set_gain(self, index, value):
-        # Map index 0..4 to x positions 0.1, 0.3, 0.5, 0.7, 0.9
-        x_target = 0.1 + index * 0.2
-        # Find if a point is close to x_target
-        threshold = 0.08
-        found = False
-        for p in self.points:
-            if abs(p.x() - x_target) < threshold:
-                p.setY(1.0 - value)
-                found = True
-                break
-        if not found:
-            self.points.append(QPointF(x_target, 1.0 - value))
-            self.points.sort(key=lambda p: p.x())
-            
+    def add_new_point(self):
+        newPoint = QPointF(0.5, 0.5)
+        self.points.append(newPoint)
+        self.points.sort(key=lambda p: p.x())
+        self.selected = self.points.index(newPoint)
         self.update()
-        pass
+        self.pointSelectionChanged.emit()
 
-    def update_sliders(self):
-        if not hasattr(self, 'sliders') or not self.sliders:
-            return
-        for i, slider in enumerate(self.sliders):
-            x_target = 0.1 + i * 0.2
-            threshold = 0.1
-            closest_point = None
-            min_dist = float('inf')
-            for p in self.points:
-                dist = abs(p.x() - x_target)
-                if dist < threshold and dist < min_dist:
-                    min_dist = dist
-                    closest_point = p
-            if closest_point is not None:
-                slider.blockSignals(True)
-                slider.setValue(int((1.0 - closest_point.y()) * 100))
-                slider.blockSignals(False)
+    def remove_selected_point(self):
+        if self.selected >= 0 and self.selected < len(self.points):
+            self.points.pop(self.selected)
+            self.selected = -1
+            self.update()
+            self.pointSelectionChanged.emit()
 
 
 
