@@ -1,12 +1,13 @@
 from gui.ControlPoint import ControlPoint
-from PySide6.QtCore import QPointF, QSize, Qt, QLineF
+from PySide6.QtCore import QPointF, QSize, Qt, QLineF, Signal
 from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QWidget
 from PySide6.QtGui import QPainter, QPainterPath, QPen, QColor
-from AudioEngine import AudioEngine
 import numpy as np
 
 
 class EqWindow(QWidget):
+
+    pointSelectionChanged = Signal()
 
     points = [
 		    QPointF(.3, .5),
@@ -22,6 +23,7 @@ class EqWindow(QWidget):
         super().__init__()
         self.freqs = np.zeros(5)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.sliders = []
 
 
         
@@ -42,7 +44,6 @@ class EqWindow(QWidget):
             painter.fillRect(self.rect(), QColor(40, 40, 40))
 
             # paint Frequencies
-            print("Frequencies:", len(self.freqs))
             for i in range(len(self.freqs)):
                 value = abs(self.freqs[i]) / 256
                 x = (i + 0.5) / len(self.freqs)
@@ -98,20 +99,11 @@ class EqWindow(QWidget):
                 painter.drawLine(QLineF(self.toScreenPos(self.points[i]), self.toScreenPos(self.points[i+1])))
 
 
-    def interpolate(self, f: float) -> float:
-        if len(self.points) == 0:
-            return 1
-
-        for i in range(len(self.points)-1):
-            if f >= self.points[i].x():
-                x1 = self.points[i].x()
-                x2 = self.points[i+1].x()
-                y1 = 1-self.points[i].y()   
-                y2 = 1-self.points[i+1].y()
-                t = (f - x1) / (x2 - x1) if x2 != x1 else 0
-                return y1 + (y2 - y1) * t
-
-        return self.points[-1].y() 
+    def interpolate(self, f: float, sample_rate: float = 44100) -> float:
+        from audio.eq_curve import EqCurve
+        pts = [(p.x(), p.y()) for p in self.points]
+        curve = EqCurve(pts)
+        return curve.interpolate(f, sample_rate) 
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
@@ -126,6 +118,7 @@ class EqWindow(QWidget):
                 break
 
         self.update()
+        self.pointSelectionChanged.emit()
     
 
     def mouseDoubleClickEvent(self, event):
@@ -135,7 +128,7 @@ class EqWindow(QWidget):
         self.points.sort(key=lambda p: p.x())
         self.selected = self.points.index(newPoint)
         self.update()
-        AudioEngine.instance.update_gains()
+        self.pointSelectionChanged.emit()
         
 
     def mouseMoveEvent(self, event):
@@ -146,6 +139,7 @@ class EqWindow(QWidget):
             self.selected = self.points.index(dragged_point)
 
             self.update()
+            self.pointSelectionChanged.emit()
     
     
     def toScreenPos(self, pos: QPointF) -> QPointF:
@@ -168,7 +162,7 @@ class EqWindow(QWidget):
 
     def mouseReleaseEvent(self, event):
         self.dragging = False
-        AudioEngine.instance.update_gains()
+        self.pointSelectionChanged.emit()
 
 
 
@@ -177,7 +171,22 @@ class EqWindow(QWidget):
             self.points.pop(self.selected)
             self.selected = -1
             self.update()
-            AudioEngine.instance.update_gains()
+            self.pointSelectionChanged.emit()
+            
+    def add_new_point(self):
+        newPoint = QPointF(0.5, 0.5)
+        self.points.append(newPoint)
+        self.points.sort(key=lambda p: p.x())
+        self.selected = self.points.index(newPoint)
+        self.update()
+        self.pointSelectionChanged.emit()
+
+    def remove_selected_point(self):
+        if self.selected >= 0 and self.selected < len(self.points):
+            self.points.pop(self.selected)
+            self.selected = -1
+            self.update()
+            self.pointSelectionChanged.emit()
 
 
 
