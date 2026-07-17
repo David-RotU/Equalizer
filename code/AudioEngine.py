@@ -28,6 +28,7 @@ class AudioEngine():
         self.bufferR = np.zeros(self.windowLength)
 
         self.frame = 0
+        self.sample_rate = 44100
         
         self.num_bins = self.windowLength // 2 + 1
         self.gains = np.ones(self.num_bins, dtype=np.float32)
@@ -128,7 +129,7 @@ class AudioEngine():
 
         for i in range(num_bins):
             f = i / (num_bins - 1)
-            self.gains[i] = self.eqWindow.interpolate(f)
+            self.gains[i] = self.eqWindow.interpolate(f, self.sample_rate)
         
         print(self.gains)
 

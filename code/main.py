@@ -58,7 +58,7 @@ def run_headless(input_path, output_path, points_str_list):
     gains = np.empty(num_bins, dtype=np.float32)
     for i in range(num_bins):
         f = i / (num_bins - 1)
-        gains[i] = eq_curve.interpolate(f)
+        gains[i] = eq_curve.interpolate(f, sr)
 
     if spectrum.data.ndim == 3:
         gains_expanded = gains[:, np.newaxis, np.newaxis]

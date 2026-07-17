@@ -51,8 +51,9 @@ class VisualizerWidget(QWidget):
         # Initial dummy data for lines
         self.sample_rate = 44100
         self.num_bins = 257
+        base_freq = self.sample_rate / 512.0
         self.freqs = np.fft.rfftfreq(512, d=1.0/self.sample_rate)
-        self.line_curve, = self.ax_curve.plot(self.freqs, np.zeros(self.num_bins), color='#00e676', linewidth=2.0)
+        self.line_curve, = self.ax_curve.plot(self.freqs[1:], np.zeros(self.num_bins - 1), color='#00e676', linewidth=2.0)
         self.ax_curve.axhline(0, color='#888888', linestyle='--', alpha=0.4, linewidth=1.0)
         
         # Configure scales and ticks for all logarithmic frequency plots
@@ -60,10 +61,10 @@ class VisualizerWidget(QWidget):
             ax.set_xscale('log') if ax == self.ax_curve else ax.set_yscale('log')
             
             if ax == self.ax_curve:
-                ax.set_xlim(20, 20000)
-                ax.set_ylim(-40, 5)
+                ax.set_xlim(base_freq, 20000)
+                ax.set_ylim(-40, 12)
             else:
-                ax.set_ylim(20, 20000)
+                ax.set_ylim(base_freq, 20000)
                 
             ax.grid(True, which='both', color=self.grid_color, linestyle=':', alpha=0.4)
             ax.tick_params(colors=self.text_color, labelsize=8)
@@ -85,7 +86,15 @@ class VisualizerWidget(QWidget):
         self.sample_rate = engine.sample_rate
         self.num_bins = engine.num_bins
         self.freqs = np.fft.rfftfreq(engine.windowLength, d=1.0/self.sample_rate)
-        self.line_curve.set_xdata(self.freqs)
+        
+        base_freq = self.sample_rate / engine.windowLength
+        for ax in [self.ax_spec_pre, self.ax_spec_post, self.ax_curve]:
+            if ax == self.ax_curve:
+                ax.set_xlim(base_freq, 20000)
+            else:
+                ax.set_ylim(base_freq, 20000)
+                
+        self.line_curve.set_xdata(self.freqs[1:])
         
         self.load_pre_eq_spectrogram()
         
@@ -103,8 +112,9 @@ class VisualizerWidget(QWidget):
         mag_pre_ds = mag_pre[:, ::step][:, :1000]
         
         # Interpolate from linear FFT bins to log-spaced frequency grid (200 bins)
+        base_freq = self.sample_rate / engine.windowLength
         lin_freqs = np.fft.rfftfreq(engine.windowLength, d=1.0/engine.sample_rate)
-        log_freqs = np.logspace(np.log10(20), np.log10(20000), 200)
+        log_freqs = np.logspace(np.log10(base_freq), np.log10(20000), 200)
         
         f_interp = interp1d(lin_freqs, mag_pre_ds, axis=0, bounds_error=False, fill_value=1e-6)
         mag_pre_log = f_interp(log_freqs)
@@ -154,8 +164,9 @@ class VisualizerWidget(QWidget):
         mag_post_ds = mag_post[:, ::step][:, :1000]
         
         # Interpolate to log-frequency scale
+        base_freq = self.sample_rate / engine.windowLength
         lin_freqs = np.fft.rfftfreq(engine.windowLength, d=1.0/engine.sample_rate)
-        log_freqs = np.logspace(np.log10(20), np.log10(20000), 200)
+        log_freqs = np.logspace(np.log10(base_freq), np.log10(20000), 200)
         
         f_interp = interp1d(lin_freqs, mag_post_ds, axis=0, bounds_error=False, fill_value=1e-6)
         mag_post_log = f_interp(log_freqs)
@@ -180,8 +191,8 @@ class VisualizerWidget(QWidget):
         # Update EQ response curve line
         if engine.gains is not None and len(engine.gains) == self.num_bins:
             db_curve = 20 * np.log10(engine.gains + 1e-6)
-            db_curve_clipped = np.clip(db_curve, -40, 5)
-            self.line_curve.set_ydata(db_curve_clipped)
+            db_curve_clipped = np.clip(db_curve, -40, 12)
+            self.line_curve.set_ydata(db_curve_clipped[1:])
             
         # Update static playhead positions to align with the current position slider value
         total_duration = len(engine.sig) / engine.sample_rate

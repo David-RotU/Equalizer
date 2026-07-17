@@ -109,7 +109,7 @@ class MainWindow(QMainWindow):
         self.gain_label = QLabel("Gain: -")
         self.gain_label.setMinimumWidth(120)
         self.gain_slider = QSlider(Qt.Orientation.Horizontal)
-        self.gain_slider.setRange(0, 100)
+        self.gain_slider.setRange(-400, 120)
         self.gain_slider.setEnabled(False)
         gain_row_layout.addWidget(self.gain_label, 1)
         gain_row_layout.addWidget(self.gain_slider, 3)
@@ -207,15 +207,23 @@ class MainWindow(QMainWindow):
             self.freq_slider.setEnabled(True)
             self.remove_button.setEnabled(True)
             
+            # Map point.y() to gain_db
+            gain_db = (1.0 - point.y()) * 52.0 - 40.0
+            # Map point.x() to freq_hz
+            freq_hz = 20.0 * (1000.0 ** point.x())
+            
             self.gain_slider.blockSignals(True)
             self.freq_slider.blockSignals(True)
-            self.gain_slider.setValue(int((1.0 - point.y()) * 100))
+            self.gain_slider.setValue(int(gain_db * 10))
             self.freq_slider.setValue(int(point.x() * 1000))
             self.gain_slider.blockSignals(False)
             self.freq_slider.blockSignals(False)
             
-            self.gain_label.setText(f"Gain: {int((1.0 - point.y()) * 100)}%")
-            self.freq_label.setText(f"Frequency: {int(point.x() * 1000)}")
+            self.gain_label.setText(f"Gain: {gain_db:.1f} dB")
+            if freq_hz >= 1000.0:
+                self.freq_label.setText(f"Frequency: {freq_hz/1000.0:.2f} kHz")
+            else:
+                self.freq_label.setText(f"Frequency: {int(freq_hz)} Hz")
         else:
             self.gain_slider.setEnabled(False)
             self.freq_slider.setEnabled(False)
@@ -227,9 +235,10 @@ class MainWindow(QMainWindow):
         selected_idx = self.eq_window.selected
         if selected_idx >= 0 and selected_idx < len(self.eq_window.points):
             point = self.eq_window.points[selected_idx]
-            point.setY(1.0 - (value / 100.0))
+            gain_db = value / 10.0
+            point.setY(1.0 - (gain_db + 40.0) / 52.0)
             self.eq_window.update()
-            self.gain_label.setText(f"Gain: {value}%")
+            self.gain_label.setText(f"Gain: {gain_db:.1f} dB")
 
     def on_freq_slider_changed(self, value):
         selected_idx = self.eq_window.selected
@@ -239,7 +248,12 @@ class MainWindow(QMainWindow):
             self.eq_window.points.sort(key=lambda p: p.x())
             self.eq_window.selected = self.eq_window.points.index(point)
             self.eq_window.update()
-            self.freq_label.setText(f"Frequency: {value}")
+            
+            freq_hz = 20.0 * (1000.0 ** point.x())
+            if freq_hz >= 1000.0:
+                self.freq_label.setText(f"Frequency: {freq_hz/1000.0:.2f} kHz")
+            else:
+                self.freq_label.setText(f"Frequency: {int(freq_hz)} Hz")
 
     def on_add_point_clicked(self):
         self.eq_window.add_new_point()
