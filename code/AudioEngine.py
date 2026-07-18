@@ -1,8 +1,12 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
 from PySide6.QtWidgets import QSlider
 import numpy as np
 import sounddevice as sd
-import gui.EqWindow
 from audio.spectral_transformer import SpectralTransformer
+
+if TYPE_CHECKING:
+    from gui.EqWindow import EqWindow
 
 class AudioEngine():
 
@@ -39,6 +43,7 @@ class AudioEngine():
         
         # Populate gains with initial EQ curve configuration
         self.update_gains()
+        self.loop = False
 
 
     def compare_energy(self):
@@ -226,10 +231,17 @@ class AudioEngine():
         self.gains[start:end] = gain
       
     
-    def play_audio(self, pos=0.0):
+    def play_audio(self, pos=None):
+        if not self.audio_loaded:
+            return False
         import sys
+        
+        target_frame = self.frame if pos is None else int(pos * self.ZxxL.shape[1])
+        if target_frame >= self.ZxxL.shape[1]:
+            target_frame = 0
+            
         self.stop()
-        self.frame = int(pos * self.ZxxL.shape[1])
+        self.frame = target_frame
 
         self.overlapL[:] = 0
         self.overlapR[:] = 0
@@ -253,13 +265,18 @@ class AudioEngine():
 
     def stop(self):
         if self.stream:
-            self.stream.stop()
-            self.stream.close()
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
             self.stream = None
         self.playing = False
-        if hasattr(self, 'current_mag_pre'):
+        if hasattr(self, 'current_mag_pre') and self.current_mag_pre is not None:
             self.current_mag_pre.fill(0)
             self.current_mag_post.fill(0)
+        self.bufferL = np.zeros(self.windowLength)
+        self.bufferR = np.zeros(self.windowLength)
 
     def stdtft(self, sig):
         # Fallback to SpectralTransformer for consistency/backward compatibility
@@ -287,20 +304,25 @@ class AudioEngine():
 
     def next_block(self):       
         if self.frame >= self.ZxxL.shape[1]:
-            if hasattr(self, 'current_mag_pre'):
-                self.current_mag_pre.fill(0)
-                self.current_mag_post.fill(0)
-            if len(self.bufferL) < 256: 
-                self.playing = False
-                return None
-            
+            if self.loop:
+                self.frame = 0
+                self.bufferL.fill(0)
+                self.bufferR.fill(0)
             else:
-                hop =  np.column_stack((self.bufferL[:256], self.bufferR[:256]))
-                self.bufferL = self.bufferL[256:]
-                self.bufferR = self.bufferR[256:]
+                if hasattr(self, 'current_mag_pre') and self.current_mag_pre is not None:
+                    self.current_mag_pre.fill(0)
+                    self.current_mag_post.fill(0)
+                if len(self.bufferL) < 256: 
+                    self.playing = False
+                    return None
+                
+                else:
+                    hop =  np.column_stack((self.bufferL[:256], self.bufferR[:256]))
+                    self.bufferL = self.bufferL[256:]
+                    self.bufferR = self.bufferR[256:]
 
 
-                return hop
+                    return hop
 
 
         # Apply equalizer

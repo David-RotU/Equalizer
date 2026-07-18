@@ -162,6 +162,93 @@ def test_headless_eq_processing():
     assert mse < 1e-12, f"Headless EQ processing failed, MSE = {mse}"
     print("Headless EQ Processing: PASSED")
 
+def test_audio_engine():
+    print("Testing AudioEngine seek, restart, and loop behaviors...")
+    from AudioEngine import AudioEngine
+    import unittest.mock as mock
+    
+    class DummyEqWindow:
+        def interpolate(self, f, sample_rate=44100):
+            return 1.0
+            
+    class MockStream:
+        def __init__(self, *args, **kwargs):
+            self.active = True
+        def start(self):
+            pass
+        def stop(self):
+            self.active = False
+        def close(self):
+            pass
+
+    # Initialize engine
+    engine = AudioEngine(DummyEqWindow())
+    
+    # Generate short test signal (e.g. 5 seconds of stereo noise)
+    fs = 44100
+    sig = np.random.uniform(-0.1, 0.1, (fs * 5, 2))
+    
+    # Load audio
+    engine.load_audio(sig, fs)
+    assert engine.audio_loaded
+    assert engine.ZxxL.shape[1] > 0
+    
+    with mock.patch('sounddevice.OutputStream', side_effect=MockStream):
+        # 1. Test seeking to middle
+        success = engine.play_audio(pos=0.5)
+        assert success
+        expected_seek_frame = int(0.5 * engine.ZxxL.shape[1])
+        assert engine.frame == expected_seek_frame
+        
+        # Get a block and check shape
+        block = engine.next_block()
+        assert block is not None
+        assert block.shape == (engine.step, 2)
+        assert engine.frame == expected_seek_frame + 1
+        engine.stop()
+        
+        # 2. Test reaching end and restarting without broadcast error
+        engine.play_audio(pos=0.99)
+        # Fast-forward frame past the end
+        engine.frame = engine.ZxxL.shape[1]
+        
+        # Consume remaining overlap buffer until it stops
+        for _ in range(10):
+            blk = engine.next_block()
+            if blk is None:
+                break
+                
+        assert not engine.playing
+        
+        # Now play again (restarting from end / beginning)
+        success = engine.play_audio()
+        assert success
+        assert engine.playing
+        assert engine.frame == 0
+        
+        # Getting a block should succeed without ValueError
+        block = engine.next_block()
+        assert block is not None
+        assert block.shape == (engine.step, 2)
+        engine.stop()
+        
+        # 3. Test loop functionality
+        engine.loop = True
+        engine.play_audio()
+        
+        # Fast-forward frame to the end
+        engine.frame = engine.ZxxL.shape[1]
+        
+        # Getting next block when loop is enabled should jump to 0 and return first audio block
+        block = engine.next_block()
+        assert block is not None
+        assert block.shape == (engine.step, 2)
+        assert engine.frame == 1  # Resets to 0, processes frame 0, increments to 1
+        
+        engine.stop()
+        
+    print("AudioEngine seek, restart, and loop behaviors: PASSED")
+
 if __name__ == '__main__':
     test_roundtrip_1d()
     print("-" * 40)
@@ -172,5 +259,7 @@ if __name__ == '__main__':
     test_eq_curve()
     print("-" * 40)
     test_headless_eq_processing()
+    print("-" * 40)
+    test_audio_engine()
     print("-" * 40)
     print("All reconstruction and EQ tests passed successfully!")

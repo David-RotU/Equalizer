@@ -37,14 +37,16 @@ class ControlsGui(QWidget):
         )        
         self.pause_play_button.clicked.connect(self.play_pause_audio)
   
-        positionSlider = QSlider(Qt.Orientation.Horizontal, self)
-        positionSlider.sliderReleased.connect(lambda: self.set_button(AudioEngine.instance.play_audio(positionSlider.value() / 100.0)))
+        self.positionSlider = QSlider(Qt.Orientation.Horizontal, self)
+        self.positionSlider.setRange(0, 100)
+        self.positionSlider.sliderReleased.connect(self.on_slider_released)
+        self.positionSlider.valueChanged.connect(self.on_slider_value_changed)
 
-        AudioEngine.instance.positionSlider = positionSlider
+        AudioEngine.instance.positionSlider = self.positionSlider
 
         layout1.addWidget(searchButton, 1)
         layout1.addWidget(self.pause_play_button, 0)
-        layout1.addWidget(positionSlider, 3)
+        layout1.addWidget(self.positionSlider, 3)
 
         # Row 2 layout
         widget2 = QWidget()
@@ -79,6 +81,12 @@ class ControlsGui(QWidget):
         preset_label = QLabel("Preset:")
         layout3.addWidget(preset_label, 0)
         layout3.addWidget(self.preset_combo, 1)
+        
+        from PySide6.QtWidgets import QCheckBox
+        self.loop_checkbox = QCheckBox("Loop", self)
+        self.loop_checkbox.toggled.connect(self.on_loop_changed)
+        layout3.addWidget(self.loop_checkbox, 0)
+        
         layout3.addStretch(3)
 
         layoutV.addWidget(widget1)
@@ -104,18 +112,30 @@ class ControlsGui(QWidget):
     def update_progress(self):
         engine = AudioEngine.instance
         if engine and engine.audio_loaded:
+            # Check if stream finished playing naturally in the background
+            if engine.stream and not engine.stream.active:
+                engine.stop()
+                self.set_button(False)
+                if hasattr(self, 'positionSlider') and self.positionSlider:
+                    self.positionSlider.blockSignals(True)
+                    self.positionSlider.setValue(100)
+                    self.positionSlider.blockSignals(False)
+                if self.visualizer:
+                    self.visualizer.update_playhead()
+                return
+
             if engine.playing:
-                if engine.stream and not engine.stream.active:
-                    engine.stop()
-                    self.set_button(False)
-                
-                if hasattr(engine, 'positionSlider') and engine.positionSlider and not engine.positionSlider.isSliderDown():
+                if hasattr(self, 'positionSlider') and self.positionSlider and not self.positionSlider.isSliderDown():
                     total_frames = engine.ZxxL.shape[1]
                     if total_frames > 0:
                         val = min(100, int(engine.frame / total_frames * 100))
-                        engine.positionSlider.blockSignals(True)
-                        engine.positionSlider.setValue(val)
-                        engine.positionSlider.blockSignals(False)
+                        self.positionSlider.blockSignals(True)
+                        self.positionSlider.setValue(val)
+                        self.positionSlider.blockSignals(False)
+                if self.visualizer:
+                    self.visualizer.update_playhead()
+            else:
+                self.set_button(False)
 
 
     def update_energy_status(self):
@@ -137,6 +157,26 @@ class ControlsGui(QWidget):
             if AudioEngine.instance.audio_loaded:
                 success = AudioEngine.instance.play_audio()
                 self.set_button(success)
+
+    def on_slider_released(self):
+        engine = AudioEngine.instance
+        if not engine.audio_loaded:
+            return
+        ratio = self.positionSlider.value() / 100.0
+        if engine.playing:
+            self.set_button(engine.play_audio(ratio))
+        else:
+            engine.stop()
+            engine.frame = int(ratio * engine.ZxxL.shape[1])
+            if self.visualizer:
+                self.visualizer.update_playhead()
+
+    def on_slider_value_changed(self, value):
+        if self.visualizer:
+            self.visualizer.update_playhead()
+
+    def on_loop_changed(self, checked):
+        AudioEngine.instance.loop = checked
 
 
 

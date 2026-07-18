@@ -213,3 +213,17 @@ class VisualizerWidget(QWidget):
         self.line_playhead_post.set_xdata([current_time, current_time])
         
         self.canvas.draw()
+
+    def update_playhead(self):
+        engine = AudioEngine.instance
+        if not engine or not engine.audio_loaded or self.time_axis is None:
+            return
+        total_duration = len(engine.sig) / engine.sample_rate
+        if hasattr(engine, 'positionSlider') and engine.positionSlider:
+            ratio = engine.positionSlider.value() / 100.0
+        else:
+            ratio = engine.frame / max(1, engine.ZxxL.shape[1])
+        current_time = ratio * total_duration
+        self.line_playhead_pre.set_xdata([current_time, current_time])
+        self.line_playhead_post.set_xdata([current_time, current_time])
+        self.canvas.draw_idle()
