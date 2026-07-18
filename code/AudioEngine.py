@@ -23,7 +23,8 @@ class AudioEngine():
 
     def __init__(self, eqWindow: EqWindow):
         self.eqWindow = eqWindow
-        self.gains = np.ones(5, dtype=np.float32)
+        #self.gains = np.ones(self.step+1, dtype=np.float32)
+        self.update_gains()
         self.norm = .75 #Todo compute 
 
         self.bufferL = np.zeros(self.windowLength)
@@ -106,18 +107,19 @@ class AudioEngine():
         for i in range(num_bins):
             f = i / (num_bins - 1)
             self.gains[i] = self.eqWindow.interpolate(f)
+        print(self.gains)
         
 
-    def set_gain(self, start_bin, end_bin, gain):
-        self.gains[start_bin:end_bin] = gain
+    # def set_gain(self, start_bin, end_bin, gain):
+    #     self.gains[start_bin:end_bin] = gain
 
-    def set_gain_hz(self, low_hz, high_hz, gain):
-        freq_resolution = self.sample_rate / self.windowLength
+    # def set_gain_hz(self, low_hz, high_hz, gain):
+    #     freq_resolution = self.sample_rate / self.windowLength
 
-        start = int(low_hz / freq_resolution)
-        end = int(high_hz / freq_resolution)
+    #     start = int(low_hz / freq_resolution)
+    #     end = int(high_hz / freq_resolution)
 
-        self.gains[start:end] = gain
+    #     self.gains[start:end] = gain
       
     
     def play_audio(self, pos=0.0):
@@ -169,10 +171,11 @@ class AudioEngine():
     def callback(self, outdata, frames, time, status):
         if self.frame < self.ZxxL.shape[1]:
             self.eqWindow.update_frequencies(self.ZxxL[:, self.frame] * self.gains)
+
             if not self.positionSlider.isSliderDown():
                 self.positionSlider.setValue(int(self.frame / self.ZxxL.shape[1] * 100))
 
-
+            
         block = self.next_block()
 
         if block is None:
@@ -180,7 +183,6 @@ class AudioEngine():
             playing = False
             self.positionSlider.setValue(0)
             raise sd.CallbackStop()
-
         outdata[:] = block
 
 
@@ -188,7 +190,7 @@ class AudioEngine():
 
     def next_block(self):       
         if self.frame >= self.ZxxL.shape[1]:
-            if len(self.bufferL) < 256: 
+            if len(self.bufferL) < 256:
                 return None
             
             else:
@@ -225,7 +227,7 @@ class AudioEngine():
         self.bufferL[:-self.step] = self.bufferL[self.step:]
         self.bufferR[:-self.step] = self.bufferR[self.step:]        
         self.bufferL[-self.step:] = 0
-        self.bufferR[-self.step:] = 0       
+        self.bufferR[-self.step:] = 0
         # self.normBuffer[:-self.step] = self.normBuffer[self.step:]        
         # self.normBuffer[-self.step:] = 0
         self.frame += 1     

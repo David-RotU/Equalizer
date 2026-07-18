@@ -4,6 +4,8 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QWidget
 from PySide6.QtGui import QPainter, QPainterPath, QPen, QColor
 from AudioEngine import AudioEngine
 import numpy as np
+import time
+import sys
 
 
 class EqWindow(QWidget):
@@ -13,6 +15,7 @@ class EqWindow(QWidget):
 		    QPointF(.3, .2)
     ]
 
+    last_time = 0
     selected = -1
     dragging = False
     radius = 6
@@ -100,17 +103,28 @@ class EqWindow(QWidget):
     def interpolate(self, f: float) -> float:
         if len(self.points) == 0:
             return 1
+        pts = self.points
 
-        for i in range(len(self.points)-1):
-            if f >= self.points[i].x():
-                x1 = self.points[i].x()
-                x2 = self.points[i+1].x()
-                y1 = 1-self.points[i].y()   
-                y2 = 1-self.points[i+1].y()
-                t = (f - x1) / (x2 - x1) if x2 != x1 else 0
+        # before first point
+        if f <= pts[0].x():
+            return 1 - pts[0].y()*2
+
+        # after last point
+        if f >= pts[-1].x():
+            return 1 - pts[-1].y()*2
+
+        # find segment containing f
+        for i in range(len(pts) - 1):
+            x1 = pts[i].x()
+            x2 = pts[i+1].x()
+            if x1 <= f <= x2:
+                y1 = 1 - pts[i].y()
+                y2 = 1 - pts[i+1].y()
+                t = (f - x1) / (x2 - x1) if x2 != x1 else 0.0
                 return y1 + (y2 - y1) * t
 
-        return self.points[-1].y() 
+        # fallback
+        return 1 - pts[-1].y()*2
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
@@ -145,6 +159,11 @@ class EqWindow(QWidget):
             self.selected = self.points.index(dragged_point)
 
             self.update()
+
+            if time.time() - self.last_time > .1:
+                self.last_time = time.time()
+                AudioEngine.instance.update_gains()
+
     
     
     def toScreenPos(self, pos: QPointF) -> QPointF:
@@ -178,12 +197,3 @@ class EqWindow(QWidget):
             self.update()
             AudioEngine.instance.update_gains()
 
-
-
-# #main test
-# app = QApplication(sys.argv)
-
-# window = EqWindow()
-# window.show()
-
-# app.exec()

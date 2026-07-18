@@ -38,11 +38,11 @@ class ControlsGui(QWidget):
         searchButton = QPushButton("Select Audio File", self)
         searchButton.clicked.connect(self.search_file)
         
-        pause_play_button = QPushButton()
-        pause_play_button.setIcon(
-        pause_play_button.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
+        self.pause_play_button = QPushButton()
+        self.pause_play_button.setIcon(
+        self.pause_play_button.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
         )        
-        pause_play_button.clicked.connect(self.play_pause_audio)
+        self.pause_play_button.clicked.connect(self.play_pause_audio)
   
 
         positionSlider = QSlider(Qt.Orientation.Horizontal, self)
@@ -51,7 +51,7 @@ class ControlsGui(QWidget):
         AudioEngine.instance.positionSlider = positionSlider
 
         layout1.addWidget(searchButton)
-        layout1.addWidget(pause_play_button)
+        layout1.addWidget(self.pause_play_button)
         layout1.addWidget(positionSlider)
 
 
@@ -97,13 +97,14 @@ class ControlsGui(QWidget):
             file_path = file_dialog.selectedFiles()[0]
             print(f"Selected file: {file_path}")
             # Signaldaten einlesen
+            filename= os.path.basename(file_path)
             try:
                 sig, sr = sf.read(file_path)
             except Exception as e:
                 print(f"Fehler beim Lesen von {filename}: {e}")
                 return
             
-            self.label.setText(os.path.basename(file_path))
+            self.label.setText(filename)
             AudioEngine.instance.load_audio(sig, sr)
             AudioEngine.instance.frame = 0
 
