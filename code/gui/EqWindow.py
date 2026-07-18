@@ -102,16 +102,16 @@ class EqWindow(QWidget):
 
     def interpolate(self, f: float) -> float:
         if len(self.points) == 0:
-            return 1
+            return .5
         pts = self.points
 
         # before first point
         if f <= pts[0].x():
-            return 1 - pts[0].y()*2
+            return 1 - pts[0].y()
 
         # after last point
         if f >= pts[-1].x():
-            return 1 - pts[-1].y()*2
+            return 1 - pts[-1].y()
 
         # find segment containing f
         for i in range(len(pts) - 1):
@@ -121,10 +121,10 @@ class EqWindow(QWidget):
                 y1 = 1 - pts[i].y()
                 y2 = 1 - pts[i+1].y()
                 t = (f - x1) / (x2 - x1) if x2 != x1 else 0.0
-                return y1 + (y2 - y1) * t
+                return (y1 + (y2 - y1) * t)
 
         # fallback
-        return 1 - pts[-1].y()*2
+        return (1 - pts[-1].y())
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:

@@ -106,9 +106,9 @@ class AudioEngine():
 
         for i in range(num_bins):
             f = i / (num_bins - 1)
-            self.gains[i] = self.eqWindow.interpolate(f)
-        print(self.gains)
-        
+            self.gains[i] = self.eqWindow.interpolate(f)*2
+            
+
 
     # def set_gain(self, start_bin, end_bin, gain):
     #     self.gains[start_bin:end_bin] = gain
