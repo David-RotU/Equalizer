@@ -7,7 +7,7 @@ class ComparisonTable(QTableWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setColumnCount(3)
-        self.setRowCount(8)
+        self.setRowCount(7)
         self.setHorizontalHeaderLabels(["Metric", "Original", "EQ Signal"])
         self.verticalHeader().setVisible(False)
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -21,7 +21,6 @@ class ComparisonTable(QTableWidget):
             ("Effektivwert / RMS (Root Mean Square)", True),
             ("Energy / Energie", True),
             ("Peak Amplitude", True),
-            ("Crest Factor", True),
             ("Correlation between Signals", False),
             ("Mean Squared Error (MSE)", False),
             ("Mean Absolute Error (MAE)", False),
@@ -35,10 +34,10 @@ class ComparisonTable(QTableWidget):
             self.setItem(i, 0, item)
             
         # Set spans for comparison metrics
+        self.setSpan(3, 1, 1, 2)
         self.setSpan(4, 1, 1, 2)
         self.setSpan(5, 1, 1, 2)
         self.setSpan(6, 1, 1, 2)
-        self.setSpan(7, 1, 1, 2)
         
         self.update_metrics()
         
@@ -71,26 +70,22 @@ class ComparisonTable(QTableWidget):
         self.set_val(2, 1, f"{metrics_dict['peak_orig']:.5f}")
         self.set_val(2, 2, f"{metrics_dict['peak_recon']:.5f}")
 
-        # 4. Crest Factor
-        self.set_val(3, 1, f"{metrics_dict['crest_orig']:.2f}")
-        self.set_val(3, 2, f"{metrics_dict['crest_recon']:.2f}")
+        # 4. Correlation
+        self.set_val(3, 1, f"{metrics_dict['correlation']:.5f}")
 
-        # 5. Correlation
-        self.set_val(4, 1, f"{metrics_dict['correlation']:.5f}")
+        # 5. MSE
+        self.set_val(4, 1, f"{metrics_dict['mse']:.5f}")
 
-        # 6. MSE
-        self.set_val(5, 1, f"{metrics_dict['mse']:.5f}")
+        # 6. MAE
+        self.set_val(5, 1, f"{metrics_dict['mae']:.5f}")
 
-        # 7. MAE
-        self.set_val(6, 1, f"{metrics_dict['mae']:.5f}")
-
-        # 8. SDR
+        # 7. SDR
         sdr = metrics_dict['sdr']
         if np.isinf(sdr) or sdr > 150: # Very high SDR or infinite
             sdr_str = "∞ dB (Identical)"
         else:
             sdr_str = f"{sdr:.2f} dB"
-        self.set_val(7, 1, sdr_str)
+        self.set_val(6, 1, sdr_str)
 
     def set_val(self, r, c, val_str):
         item = QTableWidgetItem(val_str)

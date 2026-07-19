@@ -40,6 +40,9 @@ class AudioEngine():
         self.current_mag_post = np.zeros(self.num_bins, dtype=np.float32)
         self.waveform_max = None
         self.waveform_min = None
+        self.mag_peak = 1.0
+        self.db_envelope_orig = None
+        self.db_envelope_recon = None
         
         # Populate gains with initial EQ curve configuration
         self.update_gains()
@@ -192,6 +195,14 @@ class AudioEngine():
         self.ZxxL = spectrum.data[:, :, 0]
         self.ZxxR = spectrum.data[:, :, 1]
 
+        # Compute mag_peak for normalization
+        mag_pre = (np.abs(self.ZxxL) + np.abs(self.ZxxR)) / 2.0
+        self.mag_peak = np.max(mag_pre)
+        if self.mag_peak < 1e-9:
+            self.mag_peak = 1.0
+
+        self.db_envelope_orig = self.compute_db_envelope(self.sig)
+
         self.overlapL = np.zeros(self.windowLength - self.step)
         self.overlapR = np.zeros(self.windowLength - self.step)        
         self.stream = None
@@ -223,6 +234,44 @@ class AudioEngine():
             self.gains[i] = self.eqWindow.interpolate(f, self.sample_rate)
         
         print(self.gains)
+        self.update_equalized_envelope()
+
+    def compute_db_envelope(self, sig, num_points=1000):
+        if sig is None:
+            return np.zeros(num_points, dtype=np.float32)
+        mono = np.mean(sig, axis=1) if sig.ndim > 1 else sig
+        num_samples = len(mono)
+        block_size = max(1, num_samples // num_points)
+        envelope = np.zeros(num_points, dtype=np.float32)
+        for i in range(num_points):
+            start = i * block_size
+            end = min(num_samples, (i + 1) * block_size)
+            if start < end:
+                block = mono[start:end]
+                rms = np.sqrt(np.mean(block ** 2))
+                envelope[i] = 20 * np.log10(rms + 1e-6)
+        return envelope
+
+    def update_equalized_envelope(self):
+        if not self.audio_loaded:
+            return
+        
+        # Analyze using SpectralTransformer
+        spectrum = self.transformer.analyze((self.sig, self.sample_rate))
+        
+        # Apply the current gains
+        if spectrum.data.ndim == 3:
+            gains_expanded = self.gains[:, np.newaxis, np.newaxis]
+        else:
+            gains_expanded = self.gains[:, np.newaxis]
+        
+        spectrum.data = spectrum.data * gains_expanded
+        
+        # Synthesize equalized audio
+        reconstructed = self.transformer.synthesize(spectrum)
+        
+        # Compute the equalized envelope
+        self.db_envelope_recon = self.compute_db_envelope(reconstructed)
 
 
     def set_gain(self, start_bin, end_bin, gain):

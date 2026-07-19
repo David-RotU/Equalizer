@@ -6,6 +6,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from scipy.interpolate import interp1d
 from AudioEngine import AudioEngine
+from gui.PlayheadOverlay import PlayheadOverlay
 
 class VisualizerWidget(QWidget):
     def __init__(self, parent=None):
@@ -25,10 +26,11 @@ class VisualizerWidget(QWidget):
         self.text_color = '#e0e0e0'
         self.grid_color = '#444444'
         
-        # Create subplots
-        self.ax_spec_pre = self.figure.add_subplot(3, 1, 1, facecolor=self.dark_bg)
-        self.ax_spec_post = self.figure.add_subplot(3, 1, 2, facecolor=self.dark_bg)
-        self.ax_curve = self.figure.add_subplot(3, 1, 3, facecolor=self.dark_bg)
+        # Create subplots with height ratios [5, 5, 2]
+        gs = self.figure.add_gridspec(3, 1, height_ratios=[5, 5, 2])
+        self.ax_spec_pre = self.figure.add_subplot(gs[0], facecolor=self.dark_bg)
+        self.ax_spec_post = self.figure.add_subplot(gs[1], facecolor=self.dark_bg)
+        self.ax_curve = self.figure.add_subplot(gs[2], facecolor=self.dark_bg)
         
         # Title and Labels styling
         self.ax_spec_pre.set_title("Pre-EQ Spectrogram (Original Track)", color=self.text_color, fontsize=10, pad=5)
@@ -44,9 +46,8 @@ class VisualizerWidget(QWidget):
         # Configure subplots layout margins
         self.figure.subplots_adjust(hspace=0.55, top=0.92, bottom=0.10, left=0.10, right=0.95)
         
-        # Setup playhead vertical lines on both spectrograms
-        self.line_playhead_pre = self.ax_spec_pre.axvline(0, color='#ff5252', linewidth=1.5, zorder=5)
-        self.line_playhead_post = self.ax_spec_post.axvline(0, color='#ff5252', linewidth=1.5, zorder=5)
+        # Setup playhead overlay via Qt
+        self.overlay = PlayheadOverlay(self.canvas, self.get_overlay_lines)
         
         # Initial dummy data for lines
         self.sample_rate = 44100
@@ -202,28 +203,39 @@ class VisualizerWidget(QWidget):
             db_curve_clipped = np.clip(db_curve, -80, 12)
             self.line_curve.set_ydata(db_curve_clipped[1:])
             
-        # Update static playhead positions to align with the current position slider value
-        total_duration = len(engine.sig) / engine.sample_rate
-        if hasattr(engine, 'positionSlider') and engine.positionSlider:
-            ratio = engine.positionSlider.value() / 100.0
-        else:
-            ratio = engine.frame / max(1, engine.ZxxL.shape[1])
-        current_time = ratio * total_duration
-        self.line_playhead_pre.set_xdata([current_time, current_time])
-        self.line_playhead_post.set_xdata([current_time, current_time])
-        
         self.canvas.draw()
+        self.overlay.update()
 
     def update_playhead(self):
         engine = AudioEngine.instance
         if not engine or not engine.audio_loaded or self.time_axis is None:
             return
-        total_duration = len(engine.sig) / engine.sample_rate
+        self.overlay.update()
+
+    def get_overlay_lines(self):
+        engine = AudioEngine.instance
+        if not engine or not engine.audio_loaded or self.time_axis is None:
+            return []
+            
         if hasattr(engine, 'positionSlider') and engine.positionSlider:
             ratio = engine.positionSlider.value() / 100.0
         else:
             ratio = engine.frame / max(1, engine.ZxxL.shape[1])
-        current_time = ratio * total_duration
-        self.line_playhead_pre.set_xdata([current_time, current_time])
-        self.line_playhead_post.set_xdata([current_time, current_time])
-        self.canvas.draw_idle()
+            
+        lines = []
+        dpr = float(self.canvas.devicePixelRatio())
+        canvas_height = self.canvas.height()
+        
+        for ax in [self.ax_spec_pre, self.ax_spec_post]:
+            bbox = ax.get_window_extent()
+            x0 = bbox.x0 / dpr
+            x1 = bbox.x1 / dpr
+            y0 = bbox.y0 / dpr
+            y1 = bbox.y1 / dpr
+            
+            x = x0 + ratio * (x1 - x0)
+            y_top = canvas_height - y1
+            y_bottom = canvas_height - y0
+            lines.append((x, y_top, y_bottom))
+            
+        return lines

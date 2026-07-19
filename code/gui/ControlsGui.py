@@ -2,7 +2,7 @@ import os
 from signal import signal
 import sys
 
-import gui.EqWindow
+from gui.EqWindow import EqWindow
 from AudioEngine import AudioEngine
 from gui.ControlPoint import ControlPoint
 from PySide6.QtCore import QPointF, QSize, Qt, QLineF, QTimer
@@ -15,10 +15,11 @@ import sounddevice as sd
 
 
 class ControlsGui(QWidget):
-    def __init__(self, eqWindow: EqWindow.EqWindow, visualizer=None, comparison_table=None):
+    def __init__(self, eqWindow: EqWindow, visualizer=None, comparison_table=None, db_track_widget=None):
         super().__init__()
         self.visualizer = visualizer
         self.comparison_table = comparison_table
+        self.db_track_widget = db_track_widget
         layoutV = QVBoxLayout(self)
         layoutV.setContentsMargins(0, 0, 0, 0)
         layoutV.setSpacing(10)
@@ -96,7 +97,7 @@ class ControlsGui(QWidget):
         # GUI timer to update progress slider and playback state safely in the GUI thread
         self.progress_timer = QTimer(self)
         self.progress_timer.timeout.connect(self.update_progress)
-        self.progress_timer.start(100)  # every 100ms
+        self.progress_timer.start(30)  # every 30ms (about 33 FPS for real-time visualization)
 
 
     def on_recompute_clicked(self):
@@ -105,7 +106,10 @@ class ControlsGui(QWidget):
         # 2. Recompute the visualizer graphics
         if self.visualizer:
             self.visualizer.recompute_graphics()
-        # 3. Update the energy label
+        # 3. Recompute the dB track diagram
+        if self.db_track_widget:
+            self.db_track_widget.recompute_graphics()
+        # 4. Update the energy label
         self.update_energy_status()
 
 
@@ -122,6 +126,9 @@ class ControlsGui(QWidget):
                     self.positionSlider.blockSignals(False)
                 if self.visualizer:
                     self.visualizer.update_playhead()
+                if self.db_track_widget:
+                    self.db_track_widget.update_playhead()
+                self.eqWindow.update()
                 return
 
             if engine.playing:
@@ -134,6 +141,9 @@ class ControlsGui(QWidget):
                         self.positionSlider.blockSignals(False)
                 if self.visualizer:
                     self.visualizer.update_playhead()
+                if self.db_track_widget:
+                    self.db_track_widget.update_playhead()
+                self.eqWindow.update()
             else:
                 self.set_button(False)
 
@@ -170,10 +180,14 @@ class ControlsGui(QWidget):
             engine.frame = int(ratio * engine.ZxxL.shape[1])
             if self.visualizer:
                 self.visualizer.update_playhead()
+            if self.db_track_widget:
+                self.db_track_widget.update_playhead()
 
     def on_slider_value_changed(self, value):
         if self.visualizer:
             self.visualizer.update_playhead()
+        if self.db_track_widget:
+            self.db_track_widget.update_playhead()
 
     def on_loop_changed(self, checked):
         AudioEngine.instance.loop = checked
@@ -204,6 +218,8 @@ class ControlsGui(QWidget):
             self.update_energy_status()
             if self.visualizer:
                 self.visualizer.on_track_loaded()
+            if self.db_track_widget:
+                self.db_track_widget.on_track_loaded()
 
     def on_points_changed(self):
         if not self._applying_preset:
@@ -239,6 +255,8 @@ class ControlsGui(QWidget):
             AudioEngine.instance.update_gains()
             if self.visualizer:
                 self.visualizer.recompute_graphics()
+            if self.db_track_widget:
+                self.db_track_widget.recompute_graphics()
             self.update_energy_status()
             
         self._applying_preset = False

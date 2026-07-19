@@ -227,7 +227,7 @@ class MainWindow(QMainWindow):
 
         # ControlsGui on left side above EQ Window
         from gui.ControlsGui import ControlsGui
-        self.controls_gui = ControlsGui(eq_window, self.visualizer, self.comparison_table)
+        self.controls_gui = ControlsGui(eq_window, self.visualizer, self.comparison_table, None)
 
         # Assemble Left Column
         eq_layout.addWidget(self.controls_gui, 0)
@@ -240,7 +240,7 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(15)
         right_layout.addWidget(self.visualizer, 4)
-        right_layout.addWidget(self.comparison_table, 2)
+        right_layout.addWidget(self.comparison_table, 1)
 
         # Main Layout (Horizontal)
         main_layout = QHBoxLayout(central_widget)

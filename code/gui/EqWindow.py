@@ -44,16 +44,83 @@ class EqWindow(QWidget):
             painter.fillRect(self.rect(), QColor(40, 40, 40))
 
             # paint Frequencies
-            for i in range(len(self.freqs)):
-                value = abs(self.freqs[i]) / 256
-                x = (i + 0.5) / len(self.freqs)
-                y = 1 - np.clip(value, 0, 1)
-                color = self.lerp(QColor(100, 255, 100), QColor(255, 100, 100), np.clip(value, 0, 1))
-                painter.setPen(QPen(color, 2))
-                painter.drawLine(
-                    self.toScreenPos(QPointF(x, 1)),
-                    self.toScreenPos(QPointF(x, y))
-                )
+            left = int(self.width() * 0.05)
+            top = int(self.height() * 0.05)
+            inner_rect = self.rect().adjusted(left, top, -left, -top)
+            
+            from AudioEngine import AudioEngine
+            engine = AudioEngine.instance
+            if engine and engine.audio_loaded and engine.playing:
+                painter.save()
+                painter.setClipRect(inner_rect)
+                
+                mag_pre = engine.current_mag_pre
+                mag_post = engine.current_mag_post
+                mag_peak = engine.mag_peak
+                
+                sample_rate = engine.sample_rate
+                window_length = engine.windowLength
+                
+                lin_freqs = np.fft.rfftfreq(window_length, d=1.0/sample_rate)
+                log_freqs = np.logspace(np.log10(20.0), np.log10(20000.0), 150)
+                
+                mag_pre_log = np.interp(log_freqs, lin_freqs, mag_pre)
+                mag_post_log = np.interp(log_freqs, lin_freqs, mag_post)
+                
+                path_pre = QPainterPath()
+                path_post_fill = QPainterPath()
+                path_post_line = QPainterPath()
+                
+                pre_started = False
+                post_started = False
+                
+                # Pre-EQ path
+                for i, f in enumerate(log_freqs):
+                    x = np.log10(f / 20.0) / 3.0
+                    db_pre = 20 * np.log10(mag_pre_log[i] / mag_peak + 1e-6)
+                    y_pre = 1.0 - (db_pre + 80.0) / 92.0
+                    y_pre = np.clip(y_pre, 0.0, 1.0)
+                    
+                    screen_pt = self.toScreenPos(QPointF(x, y_pre))
+                    if not pre_started:
+                        path_pre.moveTo(self.toScreenPos(QPointF(0, 1)))
+                        path_pre.lineTo(screen_pt)
+                        pre_started = True
+                    else:
+                        path_pre.lineTo(screen_pt)
+                if pre_started:
+                    path_pre.lineTo(self.toScreenPos(QPointF(1, 1)))
+                    path_pre.closeSubpath()
+                    
+                # Post-EQ path
+                for i, f in enumerate(log_freqs):
+                    x = np.log10(f / 20.0) / 3.0
+                    db_post = 20 * np.log10(mag_post_log[i] / mag_peak + 1e-6)
+                    y_post = 1.0 - (db_post + 80.0) / 92.0
+                    y_post = np.clip(y_post, 0.0, 1.0)
+                    
+                    screen_pt = self.toScreenPos(QPointF(x, y_post))
+                    if not post_started:
+                        path_post_line.moveTo(screen_pt)
+                        path_post_fill.moveTo(self.toScreenPos(QPointF(0, 1)))
+                        path_post_fill.lineTo(screen_pt)
+                        post_started = True
+                    else:
+                        path_post_line.lineTo(screen_pt)
+                        path_post_fill.lineTo(screen_pt)
+                if post_started:
+                    path_post_fill.lineTo(self.toScreenPos(QPointF(1, 1)))
+                    path_post_fill.closeSubpath()
+                
+                # Fill Pre-EQ (violet, low opacity)
+                painter.fillPath(path_pre, QColor(124, 77, 255, 30))
+                
+                # Fill and Draw Post-EQ (green)
+                painter.fillPath(path_post_fill, QColor(0, 230, 118, 25))
+                painter.setPen(QPen(QColor(0, 230, 118, 180), 1.5))
+                painter.drawPath(path_post_line)
+                
+                painter.restore()
 
 
             # Paint Grid Lines and Labels (dB and Frequency ticks)
