@@ -121,15 +121,19 @@ class AudioEngine():
         rms_orig = float(np.sqrt(np.mean(orig_mono ** 2)))
         rms_recon = float(np.sqrt(np.mean(recon_mono ** 2)))
         
-        # 2. Peak Amplitude
+        # 2. Energy
+        energy_orig = float(self.compute_energy(orig_mono))
+        energy_recon = float(self.compute_energy(recon_mono))
+        
+        # 3. Peak Amplitude
         peak_orig = float(np.max(np.abs(orig_mono)))
         peak_recon = float(np.max(np.abs(recon_mono)))
         
-        # 3. Crest Factor
+        # 4. Crest Factor
         crest_orig = float(peak_orig / rms_orig) if rms_orig > 0 else 0.0
         crest_recon = float(peak_recon / rms_recon) if rms_recon > 0 else 0.0
         
-        # 4. Correlation (Pearson correlation coefficient)
+        # 5. Correlation (Pearson correlation coefficient)
         std_orig = np.std(orig_mono)
         std_recon = np.std(recon_mono)
         if std_orig > 0 and std_recon > 0:
@@ -137,13 +141,13 @@ class AudioEngine():
         else:
             correlation = 0.0
             
-        # 5. MSE
+        # 6. MSE
         mse = float(np.mean((orig_mono - recon_mono) ** 2))
         
-        # 6. MAE
+        # 7. MAE
         mae = float(np.mean(np.abs(orig_mono - recon_mono)))
         
-        # 7. SDR (Signal to Distortion Ratio)
+        # 8. SDR (Signal to Distortion Ratio)
         noise_power = np.sum((orig_mono - recon_mono) ** 2)
         signal_power = np.sum(orig_mono ** 2)
         if noise_power > 0 and signal_power > 0:
@@ -154,6 +158,8 @@ class AudioEngine():
         return {
             'rms_orig': rms_orig,
             'rms_recon': rms_recon,
+            'energy_orig': energy_orig,
+            'energy_recon': energy_recon,
             'peak_orig': peak_orig,
             'peak_recon': peak_recon,
             'crest_orig': crest_orig,
