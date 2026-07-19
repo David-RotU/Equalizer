@@ -29,7 +29,7 @@ class AudioEngine():
 
         self.bufferL = np.zeros(self.windowLength)
         self.bufferR = np.zeros(self.windowLength)
-        self.normBuffer = np.zeros(self.windowLength)
+        # self.normBuffer = np.zeros(self.windowLength)
         
         self.frame=0
 
@@ -67,7 +67,9 @@ class AudioEngine():
         return np.sum(sqared)
 
     def reverse_stft(self):
-        frame = 0
+        self.frame = 0
+        self.bufferL = np.zeros(self.windowLength)
+        self.bufferR = np.zeros(self.windowLength)
         
         reconstructed = []
         nxt = self.next_block()
@@ -109,19 +111,6 @@ class AudioEngine():
             self.gains[i] = self.eqWindow.interpolate(f)*2
             
 
-
-    # def set_gain(self, start_bin, end_bin, gain):
-    #     self.gains[start_bin:end_bin] = gain
-
-    # def set_gain_hz(self, low_hz, high_hz, gain):
-    #     freq_resolution = self.sample_rate / self.windowLength
-
-    #     start = int(low_hz / freq_resolution)
-    #     end = int(high_hz / freq_resolution)
-
-    #     self.gains[start:end] = gain
-      
-    
     def play_audio(self, pos=0.0):
         self.stop()
         self.frame = int(pos * self.ZxxL.shape[1])
@@ -140,6 +129,9 @@ class AudioEngine():
 
 
     def stop(self):
+        self.playing = False
+        self.bufferL = np.zeros(self.windowLength)
+        self.bufferR = np.zeros(self.windowLength)
         if self.stream:
             self.stream.stop()
             self.stream.close()
@@ -181,6 +173,7 @@ class AudioEngine():
         if block is None:
             outdata[:] = 0
             playing = False
+            self.frame = 0
             self.positionSlider.setValue(0)
             raise sd.CallbackStop()
         outdata[:] = block
@@ -190,11 +183,11 @@ class AudioEngine():
 
     def next_block(self):       
         if self.frame >= self.ZxxL.shape[1]:
-            if len(self.bufferL) < 256:
+            if len(self.bufferL) < 256 or len(self.bufferR) < 256 :
                 return None
             
             else:
-                hop =  np.column_stack((self.bufferL[:256], self.bufferR[:256]))
+                hop = np.column_stack((self.bufferL[:256], self.bufferR[:256]))
                 self.bufferL = self.bufferL[256:]
                 self.bufferR = self.bufferR[256:]
 
@@ -209,13 +202,10 @@ class AudioEngine():
         winL = np.fft.irfft(specL, self.windowLength)
         winR = np.fft.irfft(specR, self.windowLength)
 
-        #winL *= self.window# / self.norm
-        #winR *= self.window# / self.norm
 
         # add into synthesis buffer
         self.bufferL += winL
         self.bufferR += winR     
-        # self.normBuffer += self.window**2   
 
         # output first hop
         outL = self.bufferL[:self.step].copy()# /  self.normBuffer[:self.step]
@@ -228,8 +218,6 @@ class AudioEngine():
         self.bufferR[:-self.step] = self.bufferR[self.step:]        
         self.bufferL[-self.step:] = 0
         self.bufferR[-self.step:] = 0
-        # self.normBuffer[:-self.step] = self.normBuffer[self.step:]        
-        # self.normBuffer[-self.step:] = 0
         self.frame += 1     
 
         return np.column_stack((outL, outR))

@@ -21,10 +21,6 @@ class MainWindow(QMainWindow):
         AudioEngine.instance = AudioEngine(eq_window) 
 
         eq_layout.addWidget(eq_window, 1)
-        for i in range(5):
-            slider = QSlider(Qt.Orientation.Vertical)
-            eq_layout.addWidget(slider, 0)
-            slider.sliderMoved.connect(lambda value, index=i: eq_window.set_gain(index, value / 100.0))
 
         layout.addWidget(ControlsGui(eq_window), 0)
         layout.addWidget(eq_Widget, 1)

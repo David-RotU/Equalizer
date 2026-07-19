@@ -34,9 +34,9 @@ class EqWindow(QWidget):
 
 
     def lerp(self, color1: QColor, color2: QColor, t: float) -> QColor:
-        r = int(color1.red() + (color2.red() - color1.red()) * t)
-        g = int(color1.green() + (color2.green() - color1.green()) * t)
-        b = int(color1.blue() + (color2.blue() - color1.blue()) * t)
+        r = int(color1.red() + (color2.red() - color1.red()) * t*2)
+        g = int(color1.green() + (color2.green() - color1.green()) * t*2)
+        b = int(color1.blue() + (color2.blue() - color1.blue()) * t*2)
         return QColor(r, g, b)
     
 
