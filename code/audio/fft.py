@@ -48,6 +48,56 @@ def irfft(spec, n):
     x_complex = ifft(full_spec)
     return np.real(x_complex)
 
+def rfft(a, n=None, axis=-1):
+    """
+    Real Fast Fourier Transform implemented in pure Python using audio.fft.
+    """
+    a = np.asarray(a)
+    ndim = a.ndim
+    if axis < 0:
+        axis += ndim
+    
+    if axis != ndim - 1:
+        a = np.moveaxis(a, axis, -1)
+    
+    orig_shape = a.shape
+    if n is None:
+        n = orig_shape[-1]
+        
+    flat_a = a.reshape(-1, orig_shape[-1])
+    num_signals = flat_a.shape[0]
+    out_len = n // 2 + 1
+    
+    complex_dtype = np.complex128 if np.issubdtype(a.dtype, np.float64) or np.issubdtype(a.dtype, np.complex128) else np.complex64
+    out = np.empty((num_signals, out_len), dtype=complex_dtype)
+    
+    for i in range(num_signals):
+        sig = flat_a[i]
+        if len(sig) < n:
+            sig = np.pad(sig, (0, n - len(sig)), mode='constant')
+        elif len(sig) > n:
+            sig = sig[:n]
+        full_fft = fft(sig)
+        out[i] = full_fft[:out_len]
+        
+    res_shape = list(orig_shape)
+    res_shape[-1] = out_len
+    out = out.reshape(res_shape)
+    
+    if axis != ndim - 1:
+        out = np.moveaxis(out, -1, axis)
+        
+    return out
+
+def rfftfreq(n, d=1.0):
+    """
+    Return the Discrete Fourier Transform sample frequencies for real input.
+    """
+    n = int(n)
+    val = 1.0 / (n * d)
+    N = n // 2 + 1
+    return np.arange(0, N, dtype=np.float64) * val
+
 
 def get_window(window_type, window_length):
     """
@@ -123,7 +173,7 @@ def stft(sig, window_length, hop_length, window_type='hann', fft_length=None):
         # Multiply each channel by the analysis window
         segment = sig_padded[start:end, :] * w_a[:, np.newaxis]
         # FFT along the sample axis (axis 0)
-        stft_matrix[:, i, :] = np.fft.rfft(segment, n=fft_length, axis=0)
+        stft_matrix[:, i, :] = rfft(segment, n=fft_length, axis=0)
 
     if not is_multichannel:
         stft_matrix = stft_matrix[:, :, 0]

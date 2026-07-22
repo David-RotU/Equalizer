@@ -7,6 +7,7 @@ from matplotlib.figure import Figure
 from scipy.interpolate import interp1d
 from AudioEngine import AudioEngine
 from gui.PlayheadOverlay import PlayheadOverlay
+from audio import rfftfreq
 
 class VisualizerWidget(QWidget):
     def __init__(self, parent=None):
@@ -53,7 +54,7 @@ class VisualizerWidget(QWidget):
         self.sample_rate = 44100
         self.num_bins = 257
         base_freq = self.sample_rate / 512.0
-        self.freqs = np.fft.rfftfreq(512, d=1.0/self.sample_rate)
+        self.freqs = rfftfreq(512, d=1.0/self.sample_rate)
         self.line_curve, = self.ax_curve.plot(self.freqs[1:], np.zeros(self.num_bins - 1), color='#00e676', linewidth=2.0)
         self.ax_curve.axhline(0, color='#888888', linestyle='--', alpha=0.4, linewidth=1.0)
         
@@ -87,7 +88,7 @@ class VisualizerWidget(QWidget):
             
         self.sample_rate = engine.sample_rate
         self.num_bins = engine.num_bins
-        self.freqs = np.fft.rfftfreq(engine.windowLength, d=1.0/self.sample_rate)
+        self.freqs = rfftfreq(engine.windowLength, d=1.0/self.sample_rate)
         
         base_freq = self.sample_rate / engine.windowLength
         for ax in [self.ax_spec_pre, self.ax_spec_post, self.ax_curve]:
@@ -121,7 +122,7 @@ class VisualizerWidget(QWidget):
         
         # Interpolate from linear FFT bins to log-spaced frequency grid (200 bins)
         base_freq = self.sample_rate / engine.windowLength
-        lin_freqs = np.fft.rfftfreq(engine.windowLength, d=1.0/engine.sample_rate)
+        lin_freqs = rfftfreq(engine.windowLength, d=1.0/engine.sample_rate)
         log_freqs = np.logspace(np.log10(base_freq), np.log10(20000), 200)
         
         f_interp = interp1d(lin_freqs, mag_pre_ds, axis=0, bounds_error=False, fill_value=1e-6)
@@ -174,7 +175,7 @@ class VisualizerWidget(QWidget):
         
         # Interpolate to log-frequency scale
         base_freq = self.sample_rate / engine.windowLength
-        lin_freqs = np.fft.rfftfreq(engine.windowLength, d=1.0/engine.sample_rate)
+        lin_freqs = rfftfreq(engine.windowLength, d=1.0/engine.sample_rate)
         log_freqs = np.logspace(np.log10(base_freq), np.log10(20000), 200)
         
         f_interp = interp1d(lin_freqs, mag_post_ds, axis=0, bounds_error=False, fill_value=1e-6)

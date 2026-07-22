@@ -3,6 +3,7 @@ from PySide6.QtCore import QPointF, QSize, Qt, QLineF, Signal
 from PySide6.QtWidgets import QApplication, QMainWindow, QPushButton, QWidget
 from PySide6.QtGui import QPainter, QPainterPath, QPen, QColor
 import numpy as np
+from audio import rfftfreq
 
 
 class EqWindow(QWidget):
@@ -61,7 +62,7 @@ class EqWindow(QWidget):
                 sample_rate = engine.sample_rate
                 window_length = engine.windowLength
                 
-                lin_freqs = np.fft.rfftfreq(window_length, d=1.0/sample_rate)
+                lin_freqs = rfftfreq(window_length, d=1.0/sample_rate)
                 log_freqs = np.logspace(np.log10(20.0), np.log10(20000.0), 150)
                 
                 mag_pre_log = np.interp(log_freqs, lin_freqs, mag_pre)
