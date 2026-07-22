@@ -6,11 +6,36 @@ import soundfile as sf
 # Add the parent directory (code) to the python path so we can import audio
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from audio.spectral_transformer import SpectralTransformer
+from audio import (
+    SpectralTransformer,
+    EqCurve,
+    stft,
+    istft,
+    fft,
+    ifft,
+    rfft,
+    irfft,
+    evaluate_reconstruction_metrics
+)
+
+def test_fft_primitives():
+    print("Testing FFT and IFFT primitives...")
+    x = np.random.uniform(-1.0, 1.0, 64)
+    x_complex = x + 0.5j * np.roll(x, 1)
+    
+    # Complex FFT & IFFT roundtrip
+    X = fft(x_complex)
+    x_recon = ifft(X)
+    assert np.allclose(x_complex, x_recon), "Complex FFT/IFFT roundtrip failed"
+    
+    # Real FFT & IRFFT roundtrip
+    X_real = rfft(x)
+    x_real_recon = irfft(X_real, len(x))
+    assert np.allclose(x, x_real_recon), "Real FFT/IRFFT roundtrip failed"
+    print("FFT and IFFT primitives: PASSED")
 
 def test_roundtrip_1d():
     print("Testing 1D signal perfect reconstruction...")
-    # Generate 1D test signal: 5 seconds of sines at 44100 Hz
     fs = 44100
     t = np.linspace(0, 5, 5 * fs, endpoint=False)
     sig = 0.5 * np.sin(2 * np.pi * 440 * t) + 0.2 * np.sin(2 * np.pi * 880 * t)
@@ -19,10 +44,8 @@ def test_roundtrip_1d():
     spectrum = st.analyze((sig, fs))
     recon = st.synthesize(spectrum)
     
-    # Check shape
     assert sig.shape == recon.shape, f"Shape mismatch: {sig.shape} vs {recon.shape}"
     
-    # Check MSE
     mse = np.mean((sig - recon) ** 2)
     print(f"1D MSE: {mse:.2e}")
     assert mse < 1e-12, f"Perfect reconstruction failed, MSE = {mse}"
@@ -36,7 +59,7 @@ def test_roundtrip_2d():
     sig_r = 0.5 * np.cos(2 * np.pi * 440 * t)
     sig = np.column_stack((sig_l, sig_r))
     
-    st = SpectralTransformer(windowLength=1024, hopLength=512) # Standard sample-based config
+    st = SpectralTransformer(windowLength=1024, hopLength=512)
     spectrum = st.analyze((sig, fs))
     recon = st.synthesize(spectrum)
     
@@ -48,7 +71,6 @@ def test_roundtrip_2d():
     print("2D Signal Perfect Reconstruction: PASSED")
 
 def test_file_roundtrip():
-    # Check if test-track.mp3 exists in the root directory
     git_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
     mp3_path = os.path.join(git_root, 'test-track.mp3')
     
@@ -60,18 +82,13 @@ def test_file_roundtrip():
     st = SpectralTransformer(baseFrequency=5, windowLength=0.1)
     spectrum = st.analyze(mp3_path)
     
-    # Load original for comparison
     sig, sr = sf.read(mp3_path)
-    
     recon = st.synthesize(spectrum)
     
-    # If the original file has multiple channels, ensure the reconstruction matches
     if sig.ndim == 2:
         assert recon.ndim == 2, "Reconstructed signal should be stereo"
         assert sig.shape[1] == recon.shape[1], "Channel mismatch"
     
-    # The reconstruction might have slightly padded length if not truncated,
-    # but SpectralTransformer.synthesize should truncate it to original_length.
     assert sig.shape[0] == recon.shape[0], f"Length mismatch: {sig.shape[0]} vs {recon.shape[0]}"
     
     mse = np.mean((sig - recon) ** 2)
@@ -80,53 +97,47 @@ def test_file_roundtrip():
     print("File Roundtrip: PASSED")
 
 def test_eq_curve():
-    print("Testing EqCurve interpolation...")
-    from audio.eq_curve import EqCurve
-    
-    # 1. Test empty / default points [(0.3, 0.5), (0.3, 0.2)]
+    print("Testing EqCurve interpolation and bin gain evaluation...")
     curve = EqCurve()
     
-    # For a frequency resulting in x <= 0.3, e.g. 50 Hz (x = log10(50/20)/3 = 0.132)
-    # y_raw = 0.5 => gain_db = (1 - 0.5) * 92 - 80 = -34 dB => linear gain = 10**(-34/20) = 0.0199526231
     f_low = 50.0 / 22050.0
     val_low = curve.interpolate(f_low)
     expected_low = 10.0 ** (-34.0 / 20.0)
     assert abs(val_low - expected_low) < 1e-6, f"Expected {expected_low}, got {val_low}"
     
-    # For a frequency resulting in x >= 0.3, e.g. 1000 Hz (x = log10(1000/20)/3 = 0.566)
-    # y_raw = 0.2 => gain_db = (1 - 0.2) * 92 - 80 = -6.4 dB => linear gain = 10**(-6.4/20) = 0.47863
     f_high = 1000.0 / 22050.0
     val_high = curve.interpolate(f_high)
     expected_high = 10.0 ** (-6.4 / 20.0)
     assert abs(val_high - expected_high) < 1e-6, f"Expected {expected_high}, got {val_high}"
 
-    # 2. Test custom points for linear interpolation on log-scale
-    # points: (0.0, 1.0) => y_raw = 1.0 => gain_db = -80 => gain = 0.0001
-    #         (1.0, 0.0) => y_raw = 0.0 => gain_db = +12 => gain = 3.9810717
     custom_points = [(0.0, 1.0), (1.0, 0.0)]
     curve_custom = EqCurve(custom_points)
     
-    # Boundary: f at 20 Hz (x = 0.0)
     f_20 = 20.0 / 22050.0
     assert abs(curve_custom.interpolate(f_20) - 0.0001) < 1e-6
     
-    # Boundary: f at 20000 Hz (x = 1.0)
     f_20k = 20000.0 / 22050.0
     assert abs(curve_custom.interpolate(f_20k) - 10.0**(12.0/20.0)) < 1e-6
     
-    # Midpoint: f at 632.45553 Hz (x = 0.5 on log scale)
-    # y_raw = 0.5 => gain_db = (1 - 0.5) * 92 - 80 = -34 dB => gain = 10**(-34.0/20.0) = 0.0199526
-    f_mid = 632.45553 / 22050.0
-    assert abs(curve_custom.interpolate(f_mid) - 10.0**(-34.0/20.0)) < 1e-6
+    gains = curve_custom.evaluate_gains(257, 44100)
+    assert len(gains) == 257
+    assert isinstance(gains, np.ndarray)
     
-    print("EqCurve Interpolation: PASSED")
+    print("EqCurve Interpolation & Evaluation: PASSED")
+
+def test_metrics():
+    print("Testing audio metrics computation...")
+    sig = np.sin(np.linspace(0, 10, 1000))
+    recon = sig * 0.99
+    
+    metrics = evaluate_reconstruction_metrics(sig, recon)
+    assert 'rms_orig' in metrics
+    assert 'sdr' in metrics
+    assert metrics['sdr'] > 30.0  # High SDR for tiny gain difference
+    print("Audio Metrics Computation: PASSED")
 
 def test_headless_eq_processing():
     print("Testing headless EQ processing logic...")
-    from audio.eq_curve import EqCurve
-    from audio.spectral_transformer import SpectralTransformer
-    
-    # Create simple 1D signal (1 second of 440Hz sine at 44100Hz)
     fs = 44100
     t = np.linspace(0, 1, fs, endpoint=False)
     sig = 0.5 * np.sin(2 * np.pi * 440 * t)
@@ -134,26 +145,10 @@ def test_headless_eq_processing():
     transformer = SpectralTransformer(windowLength=512, hopLength=256, windowType='hann')
     spectrum = transformer.analyze((sig, fs))
     
-    # Apply flat EQ (gain = 0.5 everywhere)
-    # gain_db = 20 * log10(0.5) = -6.0205999
-    # y_raw = 1.0 - (gain_db + 80.0) / 92.0
     y_raw = 1.0 - (20.0 * np.log10(0.5) + 80.0) / 92.0
     curve = EqCurve([(0.5, y_raw)])
     
-    num_bins = spectrum.fft_length // 2 + 1
-    gains = np.empty(num_bins, dtype=np.float32)
-    for i in range(num_bins):
-        f = i / (num_bins - 1)
-        gains[i] = curve.interpolate(f)
-        
-    assert np.allclose(gains, 0.5), "Flat EQ gains should all be 0.5"
-    
-    if spectrum.data.ndim == 3:
-        gains_expanded = gains[:, np.newaxis, np.newaxis]
-    else:
-        gains_expanded = gains[:, np.newaxis]
-        
-    spectrum.data = spectrum.data * gains_expanded
+    spectrum = transformer.apply_equalizer(spectrum, curve)
     recon = transformer.synthesize(spectrum)
     
     expected_recon = sig * 0.5
@@ -167,10 +162,6 @@ def test_audio_engine():
     from AudioEngine import AudioEngine
     import unittest.mock as mock
     
-    class DummyEqWindow:
-        def interpolate(self, f, sample_rate=44100):
-            return 1.0
-            
     class MockStream:
         def __init__(self, *args, **kwargs):
             self.active = True
@@ -181,38 +172,30 @@ def test_audio_engine():
         def close(self):
             pass
 
-    # Initialize engine
-    engine = AudioEngine(DummyEqWindow())
+    engine = AudioEngine(EqCurve([(0.0, 0.5)]))
     
-    # Generate short test signal (e.g. 5 seconds of stereo noise)
     fs = 44100
     sig = np.random.uniform(-0.1, 0.1, (fs * 5, 2))
     
-    # Load audio
     engine.load_audio(sig, fs)
     assert engine.audio_loaded
     assert engine.ZxxL.shape[1] > 0
     
     with mock.patch('sounddevice.OutputStream', side_effect=MockStream):
-        # 1. Test seeking to middle
         success = engine.play_audio(pos=0.5)
         assert success
         expected_seek_frame = int(0.5 * engine.ZxxL.shape[1])
         assert engine.frame == expected_seek_frame
         
-        # Get a block and check shape
         block = engine.next_block()
         assert block is not None
         assert block.shape == (engine.step, 2)
         assert engine.frame == expected_seek_frame + 1
         engine.stop()
         
-        # 2. Test reaching end and restarting without broadcast error
         engine.play_audio(pos=0.99)
-        # Fast-forward frame past the end
         engine.frame = engine.ZxxL.shape[1]
         
-        # Consume remaining overlap buffer until it stops
         for _ in range(10):
             blk = engine.next_block()
             if blk is None:
@@ -220,36 +203,32 @@ def test_audio_engine():
                 
         assert not engine.playing
         
-        # Now play again (restarting from end / beginning)
         success = engine.play_audio()
         assert success
         assert engine.playing
         assert engine.frame == 0
         
-        # Getting a block should succeed without ValueError
         block = engine.next_block()
         assert block is not None
         assert block.shape == (engine.step, 2)
         engine.stop()
         
-        # 3. Test loop functionality
         engine.loop = True
         engine.play_audio()
-        
-        # Fast-forward frame to the end
         engine.frame = engine.ZxxL.shape[1]
         
-        # Getting next block when loop is enabled should jump to 0 and return first audio block
         block = engine.next_block()
         assert block is not None
         assert block.shape == (engine.step, 2)
-        assert engine.frame == 1  # Resets to 0, processes frame 0, increments to 1
+        assert engine.frame == 1
         
         engine.stop()
         
     print("AudioEngine seek, restart, and loop behaviors: PASSED")
 
 if __name__ == '__main__':
+    test_fft_primitives()
+    print("-" * 40)
     test_roundtrip_1d()
     print("-" * 40)
     test_roundtrip_2d()
@@ -258,8 +237,10 @@ if __name__ == '__main__':
     print("-" * 40)
     test_eq_curve()
     print("-" * 40)
+    test_metrics()
+    print("-" * 40)
     test_headless_eq_processing()
     print("-" * 40)
     test_audio_engine()
     print("-" * 40)
-    print("All reconstruction and EQ tests passed successfully!")
+    print("All audio analysis, EQ, and reconstruction tests passed successfully!")

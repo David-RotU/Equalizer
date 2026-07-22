@@ -1,27 +1,25 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
-from PySide6.QtWidgets import QSlider
+import sys
 import numpy as np
 import sounddevice as sd
+import soundfile as sf
 from audio.spectral_transformer import SpectralTransformer
-from audio import irfft
+from audio.eq_curve import EqCurve
+from audio.fft import irfft
+from audio.metrics import evaluate_reconstruction_metrics, compute_energy
 
-if TYPE_CHECKING:
-    from gui.EqWindow import EqWindow
-
-class AudioEngine():
+class AudioEngine:
 
     playing = False
-    audio_loaded=False
+    audio_loaded = False
     instance: 'AudioEngine'
     windowLength = 512
     step = 256      # 50 % Overlap
     overlap = windowLength - step
-    positionSlider: QSlider
     
-
-    def __init__(self, eqWindow: EqWindow):
-        self.eqWindow = eqWindow
+    def __init__(self, eq_source=None):
+        AudioEngine.instance = self
+        self.eq_source = eq_source
         
         self.transformer = SpectralTransformer(
             windowLength=self.windowLength,
@@ -44,24 +42,43 @@ class AudioEngine():
         self.mag_peak = 1.0
         self.db_envelope_orig = None
         self.db_envelope_recon = None
+        self.loop = False
+        self.sig = None
         
         # Populate gains with initial EQ curve configuration
         self.update_gains()
-        self.loop = False
 
+    def update_gains(self, eq_curve: EqCurve = None):
+        """
+        Updates the frequency bin gains using the provided EqCurve or existing eq_source.
+        """
+        num_bins = self.windowLength // 2 + 1
+        if eq_curve is not None:
+            self.gains = eq_curve.evaluate_gains(num_bins, self.sample_rate)
+        elif self.eq_source is not None:
+            if isinstance(self.eq_source, EqCurve):
+                self.gains = self.eq_source.evaluate_gains(num_bins, self.sample_rate)
+            elif hasattr(self.eq_source, 'interpolate'):
+                self.gains = np.empty(num_bins, dtype=np.float32)
+                for i in range(num_bins):
+                    f = i / (num_bins - 1) if num_bins > 1 else 0.0
+                    self.gains[i] = self.eq_source.interpolate(f, self.sample_rate)
+        else:
+            self.gains = np.ones(num_bins, dtype=np.float32)
+
+        self.update_equalized_envelope()
 
     def compare_energy(self):
         if not self.audio_loaded:
             return
         
-        # Analyze and synthesize directly using SpectralTransformer to verify reconstruction
         spectrum = self.transformer.analyze((self.sig, self.sample_rate))
         reconstructed = self.transformer.synthesize(spectrum)
         
-        energyOriginal = self.compute_energy(self.sig)
-        energyRecons = self.compute_energy(reconstructed)
-        print("Energy Original:", energyOriginal)
-        print("Energy Reconstructed:", energyRecons)
+        energy_orig = compute_energy(self.sig)
+        energy_recon = compute_energy(reconstructed)
+        print("Energy Original:", energy_orig)
+        print("Energy Reconstructed:", energy_recon)
         print()
 
         print("RMS Original:", np.sqrt(np.mean(self.sig ** 2)))
@@ -72,14 +89,8 @@ class AudioEngine():
         if not self.audio_loaded:
             return "RMS Original: - | RMS Equalized: -"
         
-        # Analyze using SpectralTransformer
         spectrum = self.transformer.analyze((self.sig, self.sample_rate))
-        
-        # Apply the current gains
-        gains_expanded = self.gains[:, np.newaxis, np.newaxis]
-        spectrum.data = spectrum.data * gains_expanded
-        
-        # Synthesize equalized audio
+        spectrum = self.transformer.apply_equalizer(spectrum, self.gains)
         reconstructed = self.transformer.synthesize(spectrum)
         
         rms_orig = np.sqrt(np.mean(self.sig ** 2))
@@ -87,99 +98,20 @@ class AudioEngine():
         
         return f"RMS Original: {rms_orig:.4f} | RMS Equalized: {rms_recon:.4f}"
         
-    def get_comparison_metrics(self):
+    def get_comparison_metrics(self) -> dict | None:
         if not self.audio_loaded:
             return None
         
-        # Analyze using SpectralTransformer
         spectrum = self.transformer.analyze((self.sig, self.sample_rate))
-        
-        # Apply the current gains
-        if spectrum.data.ndim == 3:
-            gains_expanded = self.gains[:, np.newaxis, np.newaxis]
-        else:
-            gains_expanded = self.gains[:, np.newaxis]
-        
-        spectrum.data = spectrum.data * gains_expanded
-        
-        # Synthesize equalized audio
+        spectrum = self.transformer.apply_equalizer(spectrum, self.gains)
         reconstructed = self.transformer.synthesize(spectrum)
         
-        # Mix to mono for metrics calculation if multi-channel
-        if self.sig.ndim > 1:
-            orig_mono = np.mean(self.sig, axis=1)
-        else:
-            orig_mono = self.sig
-            
-        if reconstructed.ndim > 1:
-            recon_mono = np.mean(reconstructed, axis=1)
-        else:
-            recon_mono = reconstructed
-            
-        # Align lengths in case of minor overlap/synthesis windowing differences
-        min_len = min(len(orig_mono), len(recon_mono))
-        orig_mono = orig_mono[:min_len]
-        recon_mono = recon_mono[:min_len]
-        
-        # 1. RMS
-        rms_orig = float(np.sqrt(np.mean(orig_mono ** 2)))
-        rms_recon = float(np.sqrt(np.mean(recon_mono ** 2)))
-        
-        # 2. Energy
-        energy_orig = float(self.compute_energy(orig_mono))
-        energy_recon = float(self.compute_energy(recon_mono))
-        
-        # 3. Peak Amplitude
-        peak_orig = float(np.max(np.abs(orig_mono)))
-        peak_recon = float(np.max(np.abs(recon_mono)))
-        
-        # 4. Crest Factor
-        crest_orig = float(peak_orig / rms_orig) if rms_orig > 0 else 0.0
-        crest_recon = float(peak_recon / rms_recon) if rms_recon > 0 else 0.0
-        
-        # 5. Correlation (Pearson correlation coefficient)
-        std_orig = np.std(orig_mono)
-        std_recon = np.std(recon_mono)
-        if std_orig > 0 and std_recon > 0:
-            correlation = float(np.corrcoef(orig_mono, recon_mono)[0, 1])
-        else:
-            correlation = 0.0
-            
-        # 6. MSE
-        mse = float(np.mean((orig_mono - recon_mono) ** 2))
-        
-        # 7. MAE
-        mae = float(np.mean(np.abs(orig_mono - recon_mono)))
-        
-        # 8. SDR (Signal to Distortion Ratio)
-        noise_power = np.sum((orig_mono - recon_mono) ** 2)
-        signal_power = np.sum(orig_mono ** 2)
-        if noise_power > 0 and signal_power > 0:
-            sdr = float(10 * np.log10(signal_power / noise_power))
-        else:
-            sdr = float('inf') if noise_power == 0 else -float('inf')
-            
-        return {
-            'rms_orig': rms_orig,
-            'rms_recon': rms_recon,
-            'energy_orig': energy_orig,
-            'energy_recon': energy_recon,
-            'peak_orig': peak_orig,
-            'peak_recon': peak_recon,
-            'crest_orig': crest_orig,
-            'crest_recon': crest_recon,
-            'correlation': correlation,
-            'mse': mse,
-            'mae': mae,
-            'sdr': sdr
-        }
+        return evaluate_reconstruction_metrics(self.sig, reconstructed)
 
     def compute_energy(self, signal):
-        squared = signal ** 2
-        return np.sum(squared)
+        return compute_energy(signal)
 
-
-    def load_audio(self, sig, sr):
+    def load_audio(self, sig: np.ndarray, sr: int):
         self.audio_loaded = True
         
         # Ensure audio signal is stereo; duplicate if mono
@@ -189,7 +121,7 @@ class AudioEngine():
         self.sig = sig
         self.sample_rate = sr
 
-        # Analyze using the configured SpectralTransformer
+        # Analyze using SpectralTransformer
         spectrum = self.transformer.analyze((sig, sr))
         
         # Extract left and right channel spectra
@@ -198,7 +130,7 @@ class AudioEngine():
 
         # Compute mag_peak for normalization
         mag_pre = (np.abs(self.ZxxL) + np.abs(self.ZxxR)) / 2.0
-        self.mag_peak = np.max(mag_pre)
+        self.mag_peak = float(np.max(mag_pre))
         if self.mag_peak < 1e-9:
             self.mag_peak = 1.0
 
@@ -222,20 +154,7 @@ class AudioEngine():
                 self.waveform_max[i] = np.max(mono_sig[start:end])
                 self.waveform_min[i] = np.min(mono_sig[start:end])
 
-        # Ensure gains are aligned with the audio sample rate configuration
         self.update_gains()
-
-    def update_gains(self):
-        num_bins = self.windowLength//2 + 1
-
-        self.gains = np.empty(num_bins, dtype=np.float32)
-
-        for i in range(num_bins):
-            f = i / (num_bins - 1)
-            self.gains[i] = self.eqWindow.interpolate(f, self.sample_rate)
-        
-        print(self.gains)
-        self.update_equalized_envelope()
 
     def compute_db_envelope(self, sig, num_points=1000):
         if sig is None:
@@ -257,40 +176,24 @@ class AudioEngine():
         if not self.audio_loaded:
             return
         
-        # Analyze using SpectralTransformer
         spectrum = self.transformer.analyze((self.sig, self.sample_rate))
-        
-        # Apply the current gains
-        if spectrum.data.ndim == 3:
-            gains_expanded = self.gains[:, np.newaxis, np.newaxis]
-        else:
-            gains_expanded = self.gains[:, np.newaxis]
-        
-        spectrum.data = spectrum.data * gains_expanded
-        
-        # Synthesize equalized audio
+        spectrum = self.transformer.apply_equalizer(spectrum, self.gains)
         reconstructed = self.transformer.synthesize(spectrum)
         
-        # Compute the equalized envelope
         self.db_envelope_recon = self.compute_db_envelope(reconstructed)
 
-
-    def set_gain(self, start_bin, end_bin, gain):
+    def set_gain(self, start_bin: int, end_bin: int, gain: float):
         self.gains[start_bin:end_bin] = gain
 
-    def set_gain_hz(self, low_hz, high_hz, gain):
+    def set_gain_hz(self, low_hz: float, high_hz: float, gain: float):
         freq_resolution = self.sample_rate / self.windowLength
-
         start = int(low_hz / freq_resolution)
         end = int(high_hz / freq_resolution)
-
         self.gains[start:end] = gain
-      
     
-    def play_audio(self, pos=None):
+    def play_audio(self, pos=None) -> bool:
         if not self.audio_loaded:
             return False
-        import sys
         
         target_frame = self.frame if pos is None else int(pos * self.ZxxL.shape[1])
         if target_frame >= self.ZxxL.shape[1]:
@@ -318,7 +221,6 @@ class AudioEngine():
             self.playing = False
             return False
 
-
     def stop(self):
         if self.stream:
             try:
@@ -335,28 +237,17 @@ class AudioEngine():
         self.bufferR = np.zeros(self.windowLength)
 
     def stdtft(self, sig):
-        # Fallback to SpectralTransformer for consistency/backward compatibility
         spectrum = self.transformer.analyze((sig, self.sample_rate))
         if spectrum.data.ndim == 3:
             return spectrum.data[:, :, 0]
         return spectrum.data
 
-
-    
-
-
-
     def callback(self, outdata, frames, time, status):
         block = self.next_block()
-
         if block is None:
             outdata[:] = 0
             raise sd.CallbackStop()
-
         outdata[:] = block
-
-
-
 
     def next_block(self):       
         if self.frame >= self.ZxxL.shape[1]:
@@ -371,15 +262,11 @@ class AudioEngine():
                 if len(self.bufferL) < 256: 
                     self.playing = False
                     return None
-                
                 else:
-                    hop =  np.column_stack((self.bufferL[:256], self.bufferR[:256]))
+                    hop = np.column_stack((self.bufferL[:256], self.bufferR[:256]))
                     self.bufferL = self.bufferL[256:]
                     self.bufferR = self.bufferR[256:]
-
-
                     return hop
-
 
         # Apply equalizer
         specL = self.ZxxL[:, self.frame] * self.gains
@@ -389,20 +276,19 @@ class AudioEngine():
         self.current_mag_pre = (np.abs(self.ZxxL[:, self.frame]) + np.abs(self.ZxxR[:, self.frame])) / 2.0
         self.current_mag_post = (np.abs(specL) + np.abs(specR)) / 2.0
 
-        # Back to time domain
+        # Synthesis via inverse real FFT
         winL = irfft(specL, self.windowLength)
         winR = irfft(specR, self.windowLength)
 
-
-        # add into synthesis buffer
+        # Accumulate into synthesis buffer
         self.bufferL += winL
         self.bufferR += winR        
 
-        # output first hop
+        # Output first hop
         outL = self.bufferL[:self.step].copy()
         outR = self.bufferR[:self.step].copy()      
 
-        # shift buffer
+        # Shift buffer
         self.bufferL[:-self.step] = self.bufferL[self.step:]
         self.bufferR[:-self.step] = self.bufferR[self.step:]        
         self.bufferL[-self.step:] = 0
@@ -411,30 +297,18 @@ class AudioEngine():
 
         return np.column_stack((outL, outR))
 
-    def export_audio(self, output_path):
+    def export_audio(self, output_path: str) -> bool:
         if not self.audio_loaded:
             return False
         try:
             spectrum = self.transformer.analyze((self.sig, self.sample_rate))
-            
-            if spectrum.data.ndim == 3:
-                gains_expanded = self.gains[:, np.newaxis, np.newaxis]
-            else:
-                gains_expanded = self.gains[:, np.newaxis]
-                
-            spectrum.data = spectrum.data * gains_expanded
+            spectrum = self.transformer.apply_equalizer(spectrum, self.gains)
             reconstructed = self.transformer.synthesize(spectrum)
             
-            import soundfile as sf
             sf.write(output_path, reconstructed, self.sample_rate)
             return True
         except Exception as e:
-            import sys
             print(f"Error exporting audio: {e}", file=sys.stderr)
             return False
 
-
-
-
 instance: AudioEngine
-

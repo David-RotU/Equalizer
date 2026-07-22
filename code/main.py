@@ -1,6 +1,7 @@
 import ctypes.util
 import platform
 import sys
+import argparse
 
 # On NixOS/Nix, ctypes.util.find_library can fail under minimal environments
 # (like nix run) due to missing compiler tools or path caching.
@@ -16,13 +17,9 @@ if platform.system() == 'Linux':
         return _original_find_library(name)
     ctypes.util.find_library = _patched_find_library
 
-import argparse
-
-def run_headless(input_path, output_path, points_str_list):
-    import numpy as np
+def run_headless(input_path: str, output_path: str, points_str_list: list[str] | None):
     import soundfile as sf
-    from audio.spectral_transformer import SpectralTransformer
-    from audio.eq_curve import EqCurve
+    from audio import SpectralTransformer, EqCurve
 
     points = []
     if points_str_list:
@@ -40,40 +37,19 @@ def run_headless(input_path, output_path, points_str_list):
     eq_curve = EqCurve(points)
 
     try:
-        sig, sr = sf.read(input_path)
-    except Exception as e:
-        print(f"Error loading input file '{input_path}': {e}", file=sys.stderr)
-        sys.exit(1)
+        transformer = SpectralTransformer(
+            windowLength=512,
+            hopLength=256,
+            windowType='hann'
+        )
 
-    # Replicate SpectralTransformer parameters from AudioEngine
-    transformer = SpectralTransformer(
-        windowLength=512,
-        hopLength=256,
-        windowType='hann'
-    )
+        spectrum = transformer.analyze(input_path)
+        spectrum = transformer.apply_equalizer(spectrum, eq_curve)
+        transformer.synthesize(spectrum, output_path=output_path)
 
-    spectrum = transformer.analyze((sig, sr))
-
-    num_bins = spectrum.fft_length // 2 + 1
-    gains = np.empty(num_bins, dtype=np.float32)
-    for i in range(num_bins):
-        f = i / (num_bins - 1)
-        gains[i] = eq_curve.interpolate(f, sr)
-
-    if spectrum.data.ndim == 3:
-        gains_expanded = gains[:, np.newaxis, np.newaxis]
-    else:
-        gains_expanded = gains[:, np.newaxis]
-
-    spectrum.data = spectrum.data * gains_expanded
-
-    recon = transformer.synthesize(spectrum)
-
-    try:
-        sf.write(output_path, recon, sr)
         print(f"Successfully applied EQ and saved output to '{output_path}'")
     except Exception as e:
-        print(f"Error saving output file '{output_path}': {e}", file=sys.stderr)
+        print(f"Error processing audio file: {e}", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
@@ -93,4 +69,3 @@ if __name__ == "__main__":
     else:
         import gui.Gui as Gui
         Gui.main()
-
