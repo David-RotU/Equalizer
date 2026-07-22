@@ -21,7 +21,7 @@ def get_window(window_type: str, window_length: int) -> np.ndarray:
 
 def stft(sig: np.ndarray, window_length: int, hop_length: int, window_type: str = 'hann', fft_length: int = None) -> np.ndarray:
     """
-    Computes Short-Time Fourier Transform (STFT) of a 1D (mono) or 2D (stereo/multichannel) signal.
+    Computes Short-Time Fourier Transform (STFT) of a 1D (mono) or (stereo/multichannel) signal.
     
     Parameters:
         sig (np.ndarray): Input signal array of shape (samples,) or (samples, channels).
@@ -88,8 +88,8 @@ def stft(sig: np.ndarray, window_length: int, hop_length: int, window_type: str 
 
 def istft(stft_matrix: np.ndarray, window_length: int, hop_length: int, fft_length: int, window_type: str = 'hann', original_length: int = None) -> np.ndarray:
     """
-    Performs Inverse Short-Time Fourier Transform (ISTFT) with overlap-add normalization
-    to guarantee exact signal reconstruction.
+    Performs Inverse Short-Time Fourier Transform (ISTFT) using AudioEngine.next_block
+    to guarantee exact signal reconstruction and unified processing.
     
     Parameters:
         stft_matrix (np.ndarray): Complex STFT coefficient matrix.
@@ -102,17 +102,26 @@ def istft(stft_matrix: np.ndarray, window_length: int, hop_length: int, fft_leng
     Returns:
         np.ndarray: Reconstructed time-domain signal array.
     """
+    from AudioEngine import AudioEngine
+
+    prev_instance = getattr(AudioEngine, 'instance', None)
+    engine = AudioEngine(
+        windowLength=window_length,
+        step=hop_length,
+        windowType=window_type,
+        fft_length=fft_length
+    )
+    engine.load_stft(stft_matrix)
+
+    recon = engine.istft()
+    if prev_instance is not None:
+        AudioEngine.instance = prev_instance
+
     pad_width = window_length
 
-    if stft_matrix.ndim == 3:
-        num_channels = stft_matrix.shape[2]
-        recon_channels = []
-        for c in range(num_channels):
-            recon_c = _istft_single_channel(stft_matrix[:, :, c], window_length, hop_length, fft_length, window_type)
-            recon_channels.append(recon_c)
-        recon = np.column_stack(recon_channels)
-    else:
-        recon = _istft_single_channel(stft_matrix, window_length, hop_length, fft_length, window_type)
+    is_mono = stft_matrix.ndim == 2 or (stft_matrix.ndim == 3 and stft_matrix.shape[2] == 1)
+    if is_mono:
+        recon = recon[:, 0]
 
     # Discard front zero-padding
     recon = recon[pad_width:]
@@ -121,36 +130,3 @@ def istft(stft_matrix: np.ndarray, window_length: int, hop_length: int, fft_leng
         recon = recon[:original_length]
 
     return recon
-
-def _istft_single_channel(stft_matrix: np.ndarray, window_length: int, hop_length: int, fft_length: int, window_type: str) -> np.ndarray:
-    num_bins, num_frames = stft_matrix.shape
-    total_length = (num_frames - 1) * hop_length + window_length
-
-    float_dtype = np.float64 if np.issubdtype(stft_matrix.dtype, np.complex128) else np.float32
-    reconstructed = np.zeros(total_length, dtype=float_dtype)
-    norm_buffer = np.zeros(total_length, dtype=float_dtype)
-
-    # Get analysis window (used to compute normalization denominator)
-    w_a = get_window(window_type, window_length).astype(float_dtype)
-    # Synthesis window: rectangular (all ones) for standard overlap-add reconstruction
-    w_s = np.ones(window_length, dtype=float_dtype)
-
-    for i in range(num_frames):
-        start = i * hop_length
-        end = start + window_length
-        
-        spec = stft_matrix[:, i]
-        # Perform inverse real FFT
-        segment = irfft(spec, n=fft_length)
-        # Truncate to window length if fft_length > window_length
-        segment = segment[:window_length]
-        
-        # Accumulate overlap-add
-        reconstructed[start:end] += segment * w_s
-        norm_buffer[start:end] += w_a * w_s
-
-    # Normalize to compensate for windowing overlap sum
-    norm_buffer[norm_buffer < 1e-12] = 1.0
-    reconstructed /= norm_buffer
-
-    return reconstructed

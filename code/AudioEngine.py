@@ -17,23 +17,34 @@ class AudioEngine:
     step = 512      # 50 % Overlap
     overlap = windowLength - step
     
-    def __init__(self, eq_source=None):
-        AudioEngine.instance = self
+    def __init__(self, eq_source=None, windowLength: int = 1024, step: int = 512, windowType: str = 'hann', fft_length: int = None):
+        if getattr(AudioEngine, 'instance', None) is None:
+            AudioEngine.instance = self
         self.eq_source = eq_source
+        self.windowLength = windowLength
+        self.step = step
+        self.overlap = self.windowLength - self.step
+        self.windowType = windowType
+        self.fft_length = fft_length if fft_length is not None else self.windowLength
+
+        self.stream = None
+        from audio.stft import get_window
+        self.w_a = get_window(self.windowType, self.windowLength)
         
         self.transformer = SpectralTransformer(
             windowLength=self.windowLength,
             hopLength=self.step,
-            windowType='hann'
+            windowType=self.windowType
         )
 
         self.bufferL = np.zeros(self.windowLength)
         self.bufferR = np.zeros(self.windowLength)
+        self.norm_buffer = np.zeros(self.windowLength)
 
         self.frame = 0
         self.sample_rate = 44100
         
-        self.num_bins = self.windowLength // 2 + 1
+        self.num_bins = self.fft_length // 2 + 1
         self.gains = np.ones(self.num_bins, dtype=np.float32)
         self.current_mag_pre = np.zeros(self.num_bins, dtype=np.float32)
         self.current_mag_post = np.zeros(self.num_bins, dtype=np.float32)
@@ -289,6 +300,61 @@ class AudioEngine:
             self.current_mag_post.fill(0)
         self.bufferL = np.zeros(self.windowLength)
         self.bufferR = np.zeros(self.windowLength)
+        self.norm_buffer = np.zeros(self.windowLength)
+        if hasattr(self, 'buffers_ch'):
+            for b in self.buffers_ch:
+                b.fill(0)
+
+    def load_stft(self, stft_matrix: np.ndarray):
+        """
+        Loads pre-computed STFT matrix into AudioEngine for synthesis / streaming.
+        """
+        if stft_matrix.ndim == 3:
+            self.num_channels = stft_matrix.shape[2]
+            self.Zxx_channels = [stft_matrix[:, :, c] for c in range(self.num_channels)]
+            self.ZxxL = stft_matrix[:, :, 0]
+            self.ZxxR = stft_matrix[:, :, 1] if self.num_channels > 1 else stft_matrix[:, :, 0]
+        else:
+            self.num_channels = 1
+            self.Zxx_channels = [stft_matrix]
+            self.ZxxL = stft_matrix
+            self.ZxxR = stft_matrix
+
+        num_bins = stft_matrix.shape[0]
+        self.num_bins = num_bins
+        self.gains = np.ones(num_bins, dtype=np.float32)
+        self.eq_ZxxL = None
+        self.eq_ZxxR = None
+        self.frame = 0
+        self.bufferL = np.zeros(self.windowLength)
+        self.bufferR = np.zeros(self.windowLength)
+        self.norm_buffer = np.zeros(self.windowLength)
+        if self.num_channels > 2:
+            self.buffers_ch = [np.zeros(self.windowLength) for _ in range(self.num_channels)]
+        self.audio_loaded = True
+
+    def istft(self) -> np.ndarray:
+        """
+        Reconstructs time-domain signal by iterating next_block() until completion.
+        """
+        self.frame = 0
+        self.bufferL = np.zeros(self.windowLength)
+        self.bufferR = np.zeros(self.windowLength)
+        self.norm_buffer = np.zeros(self.windowLength)
+        if hasattr(self, 'num_channels') and self.num_channels > 2:
+            self.buffers_ch = [np.zeros(self.windowLength) for _ in range(self.num_channels)]
+
+        reconstructed = []
+        nxt = self.next_block()
+
+        while nxt is not None:
+            reconstructed.append(nxt)
+            nxt = self.next_block()
+
+        if len(reconstructed) == 0:
+            return np.zeros((0, getattr(self, 'num_channels', 2)))
+
+        return np.concatenate(reconstructed, axis=0)
 
     def stdtft(self, sig):
         spectrum = self.transformer.analyze((sig, self.sample_rate))
@@ -309,51 +375,101 @@ class AudioEngine:
                 self.frame = 0
                 self.bufferL.fill(0)
                 self.bufferR.fill(0)
+                self.norm_buffer.fill(0)
+                if hasattr(self, 'buffers_ch'):
+                    for b in self.buffers_ch:
+                        b.fill(0)
             else:
                 if hasattr(self, 'current_mag_pre') and self.current_mag_pre is not None:
                     self.current_mag_pre.fill(0)
                     self.current_mag_post.fill(0)
-                if len(self.bufferL) < 256: 
+                if not np.any(self.norm_buffer > 1e-12):
                     self.playing = False
                     return None
                 else:
-                    hop = np.column_stack((self.bufferL[:256], self.bufferR[:256]))
-                    self.bufferL = self.bufferL[256:]
-                    self.bufferR = self.bufferR[256:]
+                    norm = self.norm_buffer[:self.step].copy()
+                    norm[norm < 1e-12] = 1.0
+
+                    num_ch = getattr(self, 'num_channels', 2)
+                    if num_ch > 2:
+                        ch_outs = []
+                        for c in range(num_ch):
+                            out_c = self.buffers_ch[c][:self.step] / norm
+                            self.buffers_ch[c][:-self.step] = self.buffers_ch[c][self.step:]
+                            self.buffers_ch[c][-self.step:] = 0
+                            ch_outs.append(out_c)
+                        hop = np.column_stack(ch_outs)
+                    else:
+                        outL = self.bufferL[:self.step] / norm
+                        outR = self.bufferR[:self.step] / norm
+                        hop = np.column_stack((outL, outR))
+
+                    self.bufferL[:-self.step] = self.bufferL[self.step:]
+                    self.bufferL[-self.step:] = 0
+                    self.bufferR[:-self.step] = self.bufferR[self.step:]
+                    self.bufferR[-self.step:] = 0
+                    self.norm_buffer[:-self.step] = self.norm_buffer[self.step:]
+                    self.norm_buffer[-self.step:] = 0
                     return hop
 
-        # Get pre-computed equalized spectrum frame if available
-        if self.eq_ZxxL is not None and self.eq_ZxxR is not None:
-            specL = self.eq_ZxxL[:, self.frame]
-            specR = self.eq_ZxxR[:, self.frame]
+        num_ch = getattr(self, 'num_channels', 2)
+        if num_ch > 2:
+            for c in range(num_ch):
+                spec_c = self.Zxx_channels[c][:, self.frame] * self.gains if self.eq_ZxxL is None else self.Zxx_channels[c][:, self.frame]
+                win_c = irfft(spec_c, n=self.fft_length)[:self.windowLength]
+                self.buffers_ch[c] += win_c
         else:
-            specL = self.ZxxL[:, self.frame] * self.gains
-            specR = self.ZxxR[:, self.frame] * self.gains
+            # Get pre-computed equalized spectrum frame if available
+            if self.eq_ZxxL is not None and self.eq_ZxxR is not None:
+                specL = self.eq_ZxxL[:, self.frame]
+                specR = self.eq_ZxxR[:, self.frame]
+            else:
+                specL = self.ZxxL[:, self.frame] * self.gains
+                specR = self.ZxxR[:, self.frame] * self.gains
 
-        # Save magnitude spectra for visualizer
-        self.current_mag_pre = (np.abs(self.ZxxL[:, self.frame]) + np.abs(self.ZxxR[:, self.frame])) / 2.0
-        self.current_mag_post = (np.abs(specL) + np.abs(specR)) / 2.0
+            # Save magnitude spectra for visualizer
+            if hasattr(self, 'current_mag_pre') and self.current_mag_pre is not None:
+                self.current_mag_pre = (np.abs(self.ZxxL[:, self.frame]) + np.abs(self.ZxxR[:, self.frame])) / 2.0
+                self.current_mag_post = (np.abs(specL) + np.abs(specR)) / 2.0
 
-        # Synthesis via inverse real FFT into time space
-        winL = irfft(specL, self.windowLength)
-        winR = irfft(specR, self.windowLength)
+            # Synthesis via inverse real FFT into time space
+            winL = irfft(specL, n=self.fft_length)[:self.windowLength]
+            winR = irfft(specR, n=self.fft_length)[:self.windowLength]
 
-        # Accumulate into synthesis buffer
-        self.bufferL += winL
-        self.bufferR += winR        
+            # Accumulate into synthesis buffer
+            self.bufferL += winL
+            self.bufferR += winR        
+
+        self.norm_buffer += self.w_a
 
         # Output first hop
-        outL = self.bufferL[:self.step].copy()
-        outR = self.bufferR[:self.step].copy()      
+        norm = self.norm_buffer[:self.step].copy()
+        norm[norm < 1e-12] = 1.0
+
+        if num_ch > 2:
+            ch_outs = []
+            for c in range(num_ch):
+                out_c = self.buffers_ch[c][:self.step] / norm
+                self.buffers_ch[c][:-self.step] = self.buffers_ch[c][self.step:]
+                self.buffers_ch[c][-self.step:] = 0
+                ch_outs.append(out_c)
+            out_hop = np.column_stack(ch_outs)
+        else:
+            outL = self.bufferL[:self.step] / norm
+            outR = self.bufferR[:self.step] / norm
+            out_hop = np.column_stack((outL, outR))
 
         # Shift buffer
         self.bufferL[:-self.step] = self.bufferL[self.step:]
         self.bufferR[:-self.step] = self.bufferR[self.step:]        
         self.bufferL[-self.step:] = 0
         self.bufferR[-self.step:] = 0       
+        self.norm_buffer[:-self.step] = self.norm_buffer[self.step:]
+        self.norm_buffer[-self.step:] = 0
+
         self.frame += 1     
 
-        return np.column_stack((outL, outR))
+        return out_hop
 
     def export_audio(self, output_path: str) -> bool:
         if not self.audio_loaded or self.eq_spectrum is None:

@@ -117,7 +117,7 @@ class ControlsGui(QWidget):
         engine = AudioEngine.instance
         if engine and engine.audio_loaded:
             # Check if stream finished playing naturally in the background
-            if engine.stream and not engine.stream.active:
+            if getattr(engine, 'stream', None) and not engine.stream.active:
                 engine.stop()
                 self.set_button(False)
                 if hasattr(self, 'positionSlider') and self.positionSlider:
